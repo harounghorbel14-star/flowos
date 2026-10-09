@@ -13,6 +13,7 @@ import {
   Sparkles,
   Stamp,
   Sun,
+  TrendingUp,
   Users,
   Workflow,
 } from "lucide-react";
@@ -153,6 +154,9 @@ export function Shell() {
           ) : null}
         </NavLink>
 
+        <NavLink to="/insights" className="nav">
+          <TrendingUp aria-hidden /> Insights
+        </NavLink>
         <NavLink to="/assistant" className="nav">
           <Sparkles aria-hidden /> Assistant
         </NavLink>

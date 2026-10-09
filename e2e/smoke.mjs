@@ -70,7 +70,7 @@ async function step(name, fn) {
   let workflowUrl = "";
   await step("create the onboarding workflow from the template", async () => {
     await a.goto(`${BASE}/workflows`);
-    await a.getByRole("button", { name: "Onboarding template" }).click();
+    await a.getByRole("button", { name: "Onboarding template", exact: true }).click();
     await a.getByRole("dialog").getByRole("button", { name: "Create workflow" }).click();
     await a.waitForURL(/\/workflows\/[0-9a-f-]{36}$/);
     await a.getByText("No runs yet").waitFor();
@@ -285,6 +285,15 @@ async function step(name, fn) {
     await a.screenshot({ path: `${SHOTS}/11-palette.png` });
     await a.keyboard.press("Enter");
     await a.waitForURL(/\/projects\//);
+  });
+
+  await step("insights show measured weekly trends with definitions", async () => {
+    await a.goto(`${BASE}/insights`);
+    await a.getByRole("heading", { name: "Created vs completed" }).waitFor();
+    await a.getByText(/reconstructed from today.s records/).waitFor();
+    const label = await a.locator('.chart g[aria-label^="This week:"]').getAttribute("aria-label");
+    if (!/^This week: Created \d+, Completed \d+$/.test(label ?? ""))
+      throw new Error(`unexpected chart label ${label}`);
   });
 
   await step("assistant honestly reports it is not configured (no API key)", async () => {

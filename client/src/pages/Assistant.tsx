@@ -18,6 +18,7 @@ type StreamEvent =
 
 const TOOL_LABELS: Record<string, string> = {
   get_operational_snapshot: "Checked the operational snapshot",
+  get_weekly_trends: "Checked weekly trends",
   search_people: "Searched people",
   get_person: "Opened a profile",
   list_tasks: "Looked up tasks",
