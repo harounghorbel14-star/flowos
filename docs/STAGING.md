@@ -50,9 +50,13 @@ container with a persistent volume and a release command.
    tab. Secrets are entered there only: never in chat, Git, `.env.example`,
    source files or any `VITE_*`/client variable.
 7. Deploy. Then (optional, staging only) load demo data once from the
-   service's _Shell_: `FLOWOS_ALLOW_DEMO_SEED=true node dist/server/seed.js`.
-   Demo accounts use a public demo password; never seed a database that real
-   users will use.
+   service's _Shell_:
+   `FLOWOS_ALLOW_DEMO_SEED=true FLOWOS_DEMO_PASSWORD='<a private passphrase, 16+ characters>' node dist/server/seed.js`.
+   In production mode the seed refuses to run without that flag and a
+   private password of at least 16 characters; it rejects the documented
+   local demo password and never prints the one you chose. Share the
+   passphrase with testers privately (password manager), and never seed a
+   database that real users will use.
 
 ### Environment variables
 

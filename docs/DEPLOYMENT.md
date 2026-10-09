@@ -78,8 +78,9 @@ NODE_ENV=production APP_ORIGIN=https://app.example.com npm start
 A container image is provided (`Dockerfile`); staging instructions, the
 recommended platform and the smoke test are in [STAGING.md](STAGING.md).
 Demo data (`npm run db:seed`, or `node dist/server/seed.js` in the image)
-refuses `NODE_ENV=production` unless `FLOWOS_ALLOW_DEMO_SEED=true`; never seed
-a database used by real people. Manual browser tests: [WEB_TESTING_GUIDE.md](WEB_TESTING_GUIDE.md).
+refuses `NODE_ENV=production` unless `FLOWOS_ALLOW_DEMO_SEED=true` and a
+private `FLOWOS_DEMO_PASSWORD` of 16+ characters are set (the documented local
+demo password is rejected there); never seed a database used by real people. Manual browser tests: [WEB_TESTING_GUIDE.md](WEB_TESTING_GUIDE.md).
 
 The server serves the built client and the API from one origin. The server
 never migrates at boot unless `FLOWOS_MIGRATE_ON_START=true`. Verified

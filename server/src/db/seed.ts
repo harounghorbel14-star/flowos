@@ -3,7 +3,8 @@
  *
  * Creates two organizations and six users through the regular API procedures
  * (same validation, permissions, audit log and workflow events as the UI).
- * Refuses to run when NODE_ENV=production unless FLOWOS_ALLOW_DEMO_SEED=true,
+ * Refuses to run when NODE_ENV=production unless FLOWOS_ALLOW_DEMO_SEED=true and a
+ * private FLOWOS_DEMO_PASSWORD (16+ characters) is set; see seed-guard.ts.
  * and does nothing if the demo owner already exists. Never run it against a
  * database with real customers.
  */
@@ -14,10 +15,9 @@ import type { Context } from "../trpc/context";
 import { createCaller } from "../trpc/router";
 import { closeDb, getDb } from "./client";
 import { users } from "./schema";
+import { demoSeedPassword } from "./seed-guard";
 
 const DOMAIN = "demo.flowos.test";
-/** Demo-only password. Override with FLOWOS_DEMO_PASSWORD; never reuse it anywhere real. */
-const PASSWORD = process.env.FLOWOS_DEMO_PASSWORD || "flowos-demo-2026";
 
 const PEOPLE = {
   owner: { name: "Olivia Owner", email: `owner@${DOMAIN}` },
@@ -47,11 +47,8 @@ function caller(user: SeedUser | null, orgId?: string) {
 }
 
 async function main() {
-  if (process.env.NODE_ENV === "production" && process.env.FLOWOS_ALLOW_DEMO_SEED !== "true") {
-    throw new Error(
-      "Refusing to seed demo data with NODE_ENV=production (set FLOWOS_ALLOW_DEMO_SEED=true for a staging demo).",
-    );
-  }
+  // Throws unless seeding is allowed here; never yields a predictable password in production.
+  const { password, documented } = demoSeedPassword(process.env);
   const db = getDb();
   const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, PEOPLE.owner.email));
   if (existing) {
@@ -60,7 +57,7 @@ async function main() {
   }
 
   // Users are inserted directly (signup is rate limited per IP); everything else goes through the API.
-  const passwordHash = await hashPassword(PASSWORD);
+  const passwordHash = await hashPassword(password);
   const u = {} as Record<Key, SeedUser>;
   for (const [key, p] of Object.entries(PEOPLE) as Array<[Key, (typeof PEOPLE)[Key]]>) {
     const [row] = await db
@@ -215,10 +212,11 @@ async function main() {
       .map((p) => p.email)
       .join(", ")}`,
   );
+  // The password is printed only when it is the documented local one; a chosen password is never echoed.
   console.log(
-    process.env.FLOWOS_DEMO_PASSWORD
-      ? "Password: the value of FLOWOS_DEMO_PASSWORD."
-      : `Password for all demo users: ${PASSWORD} (demo only).`,
+    documented
+      ? `Password for all demo users: ${password} (local demo only).`
+      : "Password: the value you set in FLOWOS_DEMO_PASSWORD.",
   );
 }
 
