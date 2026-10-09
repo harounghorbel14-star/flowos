@@ -747,3 +747,26 @@ export const featureFlags = pgTable(
   },
   (t) => [primaryKey({ columns: [t.orgId, t.feature] })],
 );
+
+/** One connection per organization and integration. The secret (webhook URL / token) is encrypted at rest. */
+export const integrationConnections = pgTable(
+  "integration_connections",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    /** AES-256-GCM sealed secret (see lib/crypto.ts); never returned by the API. */
+    secretSealed: text("secret_sealed").notNull(),
+    /** Non-secret description shown in the UI, e.g. "hooks.slack.com/…/a1b2". */
+    hint: text("hint").notNull(),
+    status: text("status").$type<"active" | "error">().notNull().default("active"),
+    lastError: text("last_error"),
+    lastDeliveryAt: timestamp("last_delivery_at", { withTimezone: true }),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("integration_connections_org_provider_key").on(t.orgId, t.provider)],
+);

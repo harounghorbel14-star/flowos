@@ -8,6 +8,8 @@ import { badRequest, conflict, notFound } from "../../lib/errors";
 import { offsetOf, toPage, type PageInput } from "../../lib/pagination";
 import { requireEmployee, requireMember } from "../../lib/refs";
 import { assertWithinLimit } from "../billing/entitlements";
+import { integrationById } from "@shared/integrations";
+import { integrationConnections } from "../../db/schema";
 
 export interface WorkflowInput {
   name: string;
@@ -41,6 +43,16 @@ async function validate(tx: Tx, actor: Actor, input: WorkflowInput) {
     if (a.type === "notify" && a.recipient === "fixed_user") {
       if (!a.userId) throw badRequest("Choose the member to notify.");
       await requireMember(tx, actor.orgId, a.userId);
+    }
+    if (a.type === "send_message") {
+      const [conn] = await tx
+        .select({ id: integrationConnections.id })
+        .from(integrationConnections)
+        .where(
+          and(eq(integrationConnections.orgId, actor.orgId), eq(integrationConnections.provider, a.provider)),
+        );
+      if (!conn)
+        throw badRequest(`Connect ${integrationById(a.provider)!.name} in Settings → Integrations first.`);
     }
   }
 }

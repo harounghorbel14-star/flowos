@@ -29,6 +29,7 @@ import { formatDateTime, timeAgo } from "../lib/format";
 import { useOrg } from "../lib/session";
 import { errorCode, trpc } from "../lib/trpc";
 import { NotFoundPage } from "./NotFound";
+import { integrationById } from "@shared/integrations";
 
 const RUN_TONE: Record<string, string> = {
   SUCCEEDED: "good",
@@ -52,6 +53,9 @@ function describeAction(a: WorkflowAction): string {
     const due =
       a.dueInDays === null ? "no due date" : `due in ${a.dueInDays} day${a.dueInDays === 1 ? "" : "s"}`;
     return `Create “${a.title}” · ${label(a.priority)} · ${due} · ${ASSIGNEE_LABELS[a.assignee].toLowerCase()}`;
+  }
+  if (a.type === "send_message") {
+    return `Post to ${integrationById(a.provider)?.name ?? a.provider}: “${a.text.length > 60 ? `${a.text.slice(0, 59)}…` : a.text}”`;
   }
   return `Notify ${RECIPIENT_LABELS[a.recipient].toLowerCase()}: “${a.title}”`;
 }
