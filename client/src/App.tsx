@@ -18,7 +18,7 @@ import { OnboardingPage } from "./pages/Onboarding";
 import { PeoplePage } from "./pages/People";
 import { ProjectDetailPage } from "./pages/ProjectDetail";
 import { ProjectsPage } from "./pages/Projects";
-import { AccountPage, AuditPage, MembersPage, OrgSettingsPage } from "./pages/Settings";
+import { AccountPage, AuditPage, BillingPage, MembersPage, OrgSettingsPage } from "./pages/Settings";
 import { TaskDetailPage } from "./pages/TaskDetail";
 import { TasksPage } from "./pages/Tasks";
 import { WorkflowDetailPage, WorkflowsPage } from "./pages/Workflows";
@@ -100,6 +100,7 @@ function AuthedRoutes({ hasOrg }: { hasOrg: boolean }) {
         <Route path="settings/members" element={<MembersPage />} />
         <Route path="settings/audit" element={<AuditPage />} />
         <Route path="settings/account" element={<AccountPage />} />
+        <Route path="settings/billing" element={<BillingPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

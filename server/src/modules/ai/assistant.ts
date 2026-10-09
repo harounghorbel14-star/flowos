@@ -24,6 +24,7 @@ import {
   type AiProvider,
 } from "./provider";
 import { findTool, toApiTools, toolsFor, type ToolDef } from "./tools";
+import { assertFeature, assertWithinLimit, getEntitlements } from "../billing/entitlements";
 
 const MAX_MODEL_REQUESTS_PER_TURN = 8;
 const ACTION_TTL_MS = 10 * 60 * 1000;
@@ -509,6 +510,10 @@ export async function runTurn(
 ) {
   assertCan(actor, "ai:use");
   if (!provider) throw new AppError("BAD_REQUEST", "The AI assistant is not configured on this server.");
+  await assertFeature(db, actor.orgId, "assistant");
+  // Checked per turn; a turn can make up to MAX_MODEL_REQUESTS_PER_TURN requests, so the monthly
+  // total can exceed the limit by at most that many.
+  await assertWithinLimit(db, actor.orgId, "aiRequests");
   await aiLimiter.consume(`user:${actor.userId}`, db);
   const conversation = await ownConversation(db, actor, conversationId);
   let lock = await lockConversation(db, conversationId);
@@ -651,7 +656,9 @@ export async function runTurn(
   }
 }
 
-export function aiStatus() {
+export async function aiStatus(db?: Database, actor?: Actor) {
   const provider = getAiProvider();
-  return { configured: Boolean(provider), model: provider?.model ?? null };
+  const includedInPlan =
+    db && actor ? (await getEntitlements(db, actor.orgId)).features.includes("assistant") : true;
+  return { configured: Boolean(provider), model: provider?.model ?? null, includedInPlan };
 }

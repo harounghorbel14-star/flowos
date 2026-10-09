@@ -1,0 +1,316 @@
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { randomUUID } from "node:crypto";
+import { and, eq } from "drizzle-orm";
+import Stripe from "stripe";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createApp } from "../src/app";
+import {
+  auditEvents,
+  billingCustomers,
+  featureFlags,
+  invitations,
+  memberships,
+  subscriptions,
+  webhookEvents,
+} from "../src/db/schema";
+import { assertWithinLimit } from "../src/modules/billing/entitlements";
+import {
+  setBillingConfigForTests,
+  setBillingGatewayForTests,
+  StripeGateway,
+  type BillingConfig,
+  type BillingGateway,
+} from "../src/modules/billing/gateway";
+import { addMember, callerFor, createOrg, createUser, db } from "./helpers";
+
+const CONFIG: BillingConfig = {
+  // Never used for a network call: the test double below replaces every Stripe API request.
+  secretKey: "sk_test_flowos_unit_tests_only",
+  webhookSecret: "whsec_flowos_unit_tests_only",
+  prices: { TEAM: "price_team_test", BUSINESS: "price_business_test" },
+};
+
+/** Records API calls instead of reaching Stripe; webhook verification is the real Stripe code. */
+class RecordingGateway implements BillingGateway {
+  customers: string[] = [];
+  checkouts: Array<{ orgId: string; customerId: string; priceId: string }> = [];
+  private readonly real = new StripeGateway(CONFIG);
+  async createCustomer(input: { orgId: string }) {
+    const id = `cus_${input.orgId.slice(0, 8)}_${this.customers.length}`;
+    this.customers.push(id);
+    return id;
+  }
+  async createCheckoutSession(input: { orgId: string; customerId: string; priceId: string }) {
+    this.checkouts.push(input);
+    return `https://checkout.stripe.test/${input.orgId}`;
+  }
+  async createPortalSession(input: { customerId: string }) {
+    return `https://billing.stripe.test/${input.customerId}`;
+  }
+  verifyWebhook(rawBody: Buffer, signatureHeader: string) {
+    return this.real.verifyWebhook(rawBody, signatureHeader);
+  }
+}
+
+let server: Server;
+let base: string;
+let gateway: RecordingGateway;
+beforeAll(async () => {
+  server = createApp().listen(0);
+  await new Promise((r) => server.once("listening", r));
+  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+});
+afterAll(() => new Promise<void>((r) => server.close(() => r())));
+beforeEach(() => {
+  setBillingConfigForTests(CONFIG);
+  gateway = new RecordingGateway();
+  setBillingGatewayForTests(gateway);
+});
+afterEach(() => {
+  setBillingConfigForTests(undefined);
+  setBillingGatewayForTests(undefined);
+});
+
+let eventSeq = 0;
+function subscriptionEvent(
+  type: "customer.subscription.created" | "customer.subscription.updated" | "customer.subscription.deleted",
+  customer: string,
+  opts: { price?: string; status?: string; created?: number; id?: string; subId?: string } = {},
+) {
+  return {
+    id: opts.id ?? `evt_test_${Date.now()}_${eventSeq++}`,
+    object: "event",
+    type,
+    created: opts.created ?? Math.floor(Date.now() / 1000),
+    data: {
+      object: {
+        id: opts.subId ?? "sub_test_1",
+        object: "subscription",
+        customer,
+        status: opts.status ?? "active",
+        cancel_at_period_end: false,
+        metadata: {},
+        items: {
+          object: "list",
+          data: [
+            {
+              id: "si_1",
+              price: { id: opts.price ?? CONFIG.prices.TEAM },
+              current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400,
+            },
+          ],
+        },
+      },
+    },
+  };
+}
+
+async function deliver(event: object, opts: { secret?: string; timestamp?: number } = {}) {
+  const payload = JSON.stringify(event);
+  const signature = Stripe.webhooks.generateTestHeaderString({
+    payload,
+    secret: opts.secret ?? CONFIG.webhookSecret,
+    timestamp: opts.timestamp,
+  });
+  return fetch(`${base}/api/billing/stripe/webhook`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "stripe-signature": signature },
+    body: payload,
+  });
+}
+
+/** An org on the Free plan with a Stripe customer (as created by its first checkout). */
+async function orgWithCustomer() {
+  const ctx = await createOrg();
+  await ctx.as(ctx.owner).billing.checkout({ plan: "TEAM" });
+  const [c] = await db().select().from(billingCustomers).where(eq(billingCustomers.orgId, ctx.org.id));
+  return { ...ctx, customer: c!.stripeCustomerId };
+}
+
+describe("billing disabled (self-hosted)", () => {
+  it("has no limits and refuses checkout and webhooks", async () => {
+    setBillingConfigForTests(null);
+    setBillingGatewayForTests(undefined);
+    const { owner, as } = await createOrg();
+    const status = await as(owner).billing.status();
+    expect(status).toMatchObject({ billingEnabled: false, plan: "SELF_HOSTED", purchasable: [] });
+    expect(status.limits.members).toBeNull();
+    await expect(as(owner).billing.checkout({ plan: "TEAM" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect((await deliver(subscriptionEvent("customer.subscription.created", "cus_x"))).status).toBe(404);
+  });
+});
+
+describe("plans and limits", () => {
+  it("Free plan: member, workflow and assistant limits are enforced", async () => {
+    const { owner, org, as } = await createOrg();
+    expect(await as(owner).billing.status()).toMatchObject({ plan: "FREE", billingEnabled: true });
+    // Owner + 4 invitations reaches the 5-member limit.
+    for (let i = 0; i < 4; i++)
+      await as(owner).orgs.invite({ email: `m${i}-${randomUUID()}@x.test`, role: "MEMBER" });
+    await expect(
+      as(owner).orgs.invite({ email: `over-${randomUUID()}@x.test`, role: "MEMBER" }),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: expect.stringContaining("Free plan allows 5 members"),
+    });
+    const wf = {
+      name: "W",
+      trigger: "employee.created" as const,
+      conditions: [],
+      actions: [
+        { type: "notify" as const, title: "x", body: "", recipient: "workflow_owner" as const, userId: null },
+      ],
+    };
+    for (let i = 0; i < 3; i++) await as(owner).workflows.create({ ...wf, name: `W${i}` });
+    await expect(as(owner).workflows.create(wf)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect((await as(owner).ai.status()).includedInPlan).toBe(false);
+    await expect(assertWithinLimit(db(), org.id, "storage", 2 * 1024 ** 3)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+  });
+
+  it("accepting an invitation re-checks the member limit", async () => {
+    const { owner, org, as } = await createOrg();
+    const invitee = await createUser("Ivy Invitee");
+    const { token } = await as(owner).orgs.invite({ email: invitee.email, role: "MEMBER" });
+    for (let i = 0; i < 3; i++)
+      await as(owner).orgs.invite({ email: `p${i}-${randomUUID()}@x.test`, role: "MEMBER" });
+    // 1 member + 4 open invitations = 5. A member added out of band (e.g. before a downgrade) fills the plan.
+    const extra = await createUser("Out of band");
+    await db().insert(memberships).values({ orgId: org.id, userId: extra.id, role: "MEMBER" });
+    await expect(callerFor(invitee).orgs.acceptInvitation({ token })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    // Nothing was half-applied: the invitation is still open.
+    const [inv] = await db()
+      .select()
+      .from(invitations)
+      .where(and(eq(invitations.orgId, org.id), eq(invitations.email, invitee.email)));
+    expect(inv!.acceptedAt).toBeNull();
+  });
+
+  it("operator feature flags override plan features", async () => {
+    const { owner, org, as } = await createOrg();
+    expect((await as(owner).billing.status()).features).not.toContain("assistant");
+    await db()
+      .insert(featureFlags)
+      .values({ orgId: org.id, feature: "assistant", enabled: true, reason: "beta" });
+    expect((await as(owner).billing.status()).features).toContain("assistant");
+  });
+});
+
+describe("checkout and portal", () => {
+  it("only owners can start checkout; the Stripe customer is created once", async () => {
+    const { owner, org, as } = await createOrg();
+    const admin = await addMember(org.id, owner, "ADMIN");
+    await expect(as(admin).billing.checkout({ plan: "TEAM" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const r1 = await as(owner).billing.checkout({ plan: "TEAM" });
+    const r2 = await as(owner).billing.checkout({ plan: "BUSINESS" });
+    expect(r1.url).toContain(org.id);
+    expect(gateway.customers).toHaveLength(1);
+    expect(gateway.checkouts.map((c) => c.priceId)).toEqual([CONFIG.prices.TEAM, CONFIG.prices.BUSINESS]);
+    expect(new Set(gateway.checkouts.map((c) => c.customerId)).size).toBe(1);
+    void r2;
+    expect((await as(owner).billing.portal()).url).toContain("cus_");
+    const audits = await db()
+      .select()
+      .from(auditEvents)
+      .where(and(eq(auditEvents.orgId, org.id), eq(auditEvents.action, "billing.checkout_started")));
+    expect(audits).toHaveLength(2);
+  });
+});
+
+describe("Stripe webhooks", () => {
+  it("rejects unsigned, wrongly signed and stale deliveries", async () => {
+    const event = subscriptionEvent("customer.subscription.created", "cus_nobody");
+    const unsigned = await fetch(`${base}/api/billing/stripe/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(event),
+    });
+    expect(unsigned.status).toBe(400);
+    expect((await deliver(event, { secret: "whsec_wrong" })).status).toBe(400);
+    expect((await deliver(event, { timestamp: Math.floor(Date.now() / 1000) - 3600 })).status).toBe(400);
+    expect(await db().select().from(webhookEvents).where(eq(webhookEvents.eventId, event.id))).toHaveLength(
+      0,
+    );
+  });
+
+  it("applies a subscription, ignores duplicates and out-of-order events, and downgrades on cancel", async () => {
+    const { owner, org, as, customer } = await orgWithCustomer();
+    const now = Math.floor(Date.now() / 1000);
+    const created = subscriptionEvent("customer.subscription.created", customer, { created: now - 10 });
+    const r = await deliver(created);
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ received: true, outcome: "applied" });
+    let status = await as(owner).billing.status();
+    expect(status).toMatchObject({ plan: "TEAM", subscription: { status: "active" } });
+    expect(status.limits.members).toBe(25);
+    expect(status.features).toContain("assistant");
+
+    // Redelivery of the same event: no second effect.
+    expect(await (await deliver(created)).json()).toEqual({ received: true, outcome: "duplicate" });
+    const audits = await db()
+      .select()
+      .from(auditEvents)
+      .where(and(eq(auditEvents.orgId, org.id), eq(auditEvents.action, "billing.subscription_updated")));
+    expect(audits).toHaveLength(1);
+
+    // An older update arriving late does not overwrite the newer state.
+    const stale = subscriptionEvent("customer.subscription.updated", customer, {
+      status: "past_due",
+      created: now - 60,
+    });
+    expect(await (await deliver(stale)).json()).toEqual({ received: true, outcome: "ignored" });
+    expect((await as(owner).billing.status()).subscription?.status).toBe("active");
+
+    // Upgrade to Business, then cancellation.
+    await deliver(
+      subscriptionEvent("customer.subscription.updated", customer, {
+        price: CONFIG.prices.BUSINESS,
+        created: now,
+      }),
+    );
+    expect((await as(owner).billing.status()).plan).toBe("BUSINESS");
+    await deliver(subscriptionEvent("customer.subscription.deleted", customer, { created: now + 1 }));
+    status = await as(owner).billing.status();
+    expect(status).toMatchObject({ plan: "FREE", subscription: { status: "canceled" } });
+  });
+
+  it("ignores events for unknown customers and unknown prices, and never trusts a claimed org id", async () => {
+    const a = await orgWithCustomer();
+    const b = await createOrg();
+    expect(
+      await (await deliver(subscriptionEvent("customer.subscription.created", "cus_unknown"))).json(),
+    ).toMatchObject({
+      outcome: "ignored",
+    });
+    expect(
+      await (
+        await deliver(
+          subscriptionEvent("customer.subscription.created", a.customer, { price: "price_other" }),
+        )
+      ).json(),
+    ).toMatchObject({ outcome: "ignored" });
+    // checkout.session.completed claiming org B with org A's customer.
+    const forged = {
+      id: `evt_forged_${Date.now()}`,
+      object: "event",
+      type: "checkout.session.completed",
+      created: Math.floor(Date.now() / 1000),
+      data: {
+        object: {
+          id: "cs_1",
+          object: "checkout.session",
+          customer: a.customer,
+          client_reference_id: b.org.id,
+          metadata: {},
+        },
+      },
+    };
+    expect(await (await deliver(forged)).json()).toMatchObject({ outcome: "ignored" });
+    expect(await db().select().from(subscriptions).where(eq(subscriptions.orgId, b.org.id))).toHaveLength(0);
+    expect((await b.as(b.owner).billing.status()).plan).toBe("FREE");
+  });
+});

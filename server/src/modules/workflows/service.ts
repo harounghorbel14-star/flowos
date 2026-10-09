@@ -7,6 +7,7 @@ import { audit } from "../../lib/audit";
 import { badRequest, conflict, notFound } from "../../lib/errors";
 import { offsetOf, toPage, type PageInput } from "../../lib/pagination";
 import { requireEmployee, requireMember } from "../../lib/refs";
+import { assertWithinLimit } from "../billing/entitlements";
 
 export interface WorkflowInput {
   name: string;
@@ -109,6 +110,7 @@ export async function createWorkflow(db: Database, actor: Actor, input: Workflow
   assertCan(actor, "workflow:manage");
   return db.transaction(async (tx) => {
     await validate(tx, actor, input);
+    await assertWithinLimit(tx, actor.orgId, "workflows");
     const [wf] = await tx
       .insert(workflows)
       .values({ ...input, orgId: actor.orgId, ownerUserId: actor.userId })

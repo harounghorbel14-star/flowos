@@ -28,6 +28,8 @@ export const PERMISSIONS = [
   "document:upload",
   "document:manage",
   "ai:use",
+  "billing:manage",
+  "integration:manage",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -67,6 +69,7 @@ const ADMIN: Permission[] = [
   "audit:read",
   "approval:read_all",
   "workflow:manage",
+  "integration:manage",
 ];
 
 export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {

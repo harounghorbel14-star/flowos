@@ -2,6 +2,7 @@ import { aiRouter } from "../modules/ai/router";
 import { approvalsRouter } from "../modules/approvals/router";
 import { auditRouter } from "../modules/audit/router";
 import { authRouter } from "../modules/auth/router";
+import { billingRouter } from "../modules/billing/router";
 import { dashboardRouter } from "../modules/dashboard/router";
 import { departmentsRouter } from "../modules/departments/router";
 import { documentsRouter } from "../modules/documents/router";
@@ -31,6 +32,7 @@ export const appRouter = router({
   documents: documentsRouter,
   ai: aiRouter,
   insights: insightsRouter,
+  billing: billingRouter,
 });
 
 export type AppRouter = typeof appRouter;

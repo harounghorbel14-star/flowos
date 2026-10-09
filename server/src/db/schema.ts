@@ -681,3 +681,69 @@ export const metricSnapshots = pgTable(
   },
   (t) => [primaryKey({ columns: [t.orgId, t.day] })],
 );
+
+/** One row per organization that has (or had) a paid subscription; no row = Free. */
+export const subscriptions = pgTable(
+  "subscriptions",
+  {
+    orgId: uuid("org_id")
+      .primaryKey()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    plan: text("plan").$type<"TEAM" | "BUSINESS">().notNull(),
+    /** Stripe subscription status (active, trialing, past_due, canceled, unpaid, incomplete, …). */
+    status: text("status").notNull(),
+    stripeCustomerId: text("stripe_customer_id").notNull(),
+    stripeSubscriptionId: text("stripe_subscription_id").notNull(),
+    currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
+    cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+    /** `created` of the Stripe event last applied; older events are ignored (out-of-order delivery). */
+    lastEventCreatedAt: timestamp("last_event_created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("subscriptions_stripe_subscription_key").on(t.stripeSubscriptionId),
+    index("subscriptions_customer_idx").on(t.stripeCustomerId),
+  ],
+);
+
+/** Stripe customer per organization, created at first checkout. */
+export const billingCustomers = pgTable("billing_customers", {
+  orgId: uuid("org_id")
+    .primaryKey()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  stripeCustomerId: text("stripe_customer_id").notNull().unique(),
+  createdAt: createdAt(),
+});
+
+/** Every verified webhook event, keyed by the provider's event id: processing is idempotent. */
+export const webhookEvents = pgTable(
+  "webhook_events",
+  {
+    provider: text("provider").notNull(),
+    eventId: text("event_id").notNull(),
+    type: text("type").notNull(),
+    orgId: uuid("org_id"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    /** null = received but ignored (no matching organization or unhandled type). */
+    outcome: text("outcome").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.provider, t.eventId] })],
+);
+
+/**
+ * Operator-controlled per-organization feature overrides (beta access, kill
+ * switches). Not editable by organization members: set with `npm run flags`.
+ */
+export const featureFlags = pgTable(
+  "feature_flags",
+  {
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    feature: text("feature").notNull(),
+    enabled: boolean("enabled").notNull(),
+    reason: text("reason"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.feature] })],
+);
