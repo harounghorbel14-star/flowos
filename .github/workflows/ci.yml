@@ -26,7 +26,7 @@ jobs:
           POSTGRES_DB: flowos_test
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U flowos" --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U flowos -d flowos_test" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       TEST_DATABASE_URL: postgres://flowos:flowos@localhost:5432/flowos_test
     steps:
@@ -51,10 +51,9 @@ jobs:
           POSTGRES_DB: flowos
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U flowos" --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U flowos -d flowos" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       DATABASE_URL: postgres://flowos:flowos@localhost:5432/flowos
-      NODE_ENV: production
       PORT: "3000"
       APP_ORIGIN: http://localhost:3000
       STORAGE_DIR: /tmp/flowos-storage
@@ -69,7 +68,10 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run build
       - run: npm run db:migrate
+      # NODE_ENV only on the server step: during `npm ci` it would skip devDependencies.
       - name: Start server
+        env:
+          NODE_ENV: production
         run: |
           node dist/server/index.js > server.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://localhost:3000/api/health && exit 0; sleep 1; done
