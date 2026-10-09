@@ -41,7 +41,7 @@ describe("authentication", () => {
 
   it("rejects duplicate emails and weak passwords", async () => {
     const user = await createUser();
-    resetLimiters();
+    await resetLimiters();
     await expect(
       anonCaller().auth.signup({ email: user.email, name: "Dup", password: "longpassword1" }),
     ).rejects.toMatchObject({ code: "CONFLICT" });

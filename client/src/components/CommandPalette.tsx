@@ -10,6 +10,7 @@ import {
   Settings,
   Sparkles,
   Stamp,
+  TrendingUp,
   User,
   Users,
   Workflow,
@@ -84,6 +85,13 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose(): vo
         title: "Command center",
         icon: <LayoutDashboard aria-hidden />,
         to: "/",
+      },
+      {
+        id: "nav-insights",
+        group: "Go to",
+        title: "Insights",
+        icon: <TrendingUp aria-hidden />,
+        to: "/insights",
       },
       {
         id: "nav-assistant",

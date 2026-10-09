@@ -6,6 +6,7 @@ import { can, type Actor } from "../../lib/actor";
 import { listRequests } from "../approvals/service";
 import { commandCenter } from "../dashboard/service";
 import { listDocuments } from "../documents/service";
+import { operationalTrends } from "../insights/service";
 import { getEmployee, listEmployees } from "../employees/service";
 import { listProjects } from "../projects/service";
 import { createTask, getTask, listTasks, updateTask } from "../tasks/service";
@@ -61,6 +62,27 @@ export const TOOLS: readonly ToolDef[] = [
         approvalsAwaitingMe: cc.approvals,
         projectsAtRisk: cc.projectsAtRisk.map((p) => ({ id: p.id, name: p.name, reasons: p.reasons })),
         expiringDocuments: cc.expiringDocuments,
+      };
+    },
+  }),
+  def({
+    name: "get_weekly_trends",
+    description:
+      "Measured week-over-week trends: tasks created/completed per week for 8 weeks, open overdue tasks at each week end, last-7-days vs previous-7-days counts, and (if permitted) approval turnaround and workflow failures. Each figure comes with its definition; report them as facts, not causes.",
+    schema: z.object({}),
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    permissions: ["task:read"],
+    risk: "read",
+    confirmation: "never",
+    execute: async (db, actor) => {
+      const t = await operationalTrends(db as Database, actor);
+      return {
+        definitions: t.definitions,
+        weeks: t.weeks,
+        rolling: t.rolling,
+        approvals: t.approvals,
+        workflowFailures: t.workflows?.failing ?? null,
+        notable: t.notable.map((n) => n.summary),
       };
     },
   }),

@@ -6,16 +6,16 @@ readiness — see "Known gaps" at the end.
 
 ## Authentication and sessions
 
-| Control                                                                                                 | Where                         | Verified by          |
-| ------------------------------------------------------------------------------------------------------- | ----------------------------- | -------------------- |
-| scrypt password hashing (N=2^15, r=8, p=1, 16-byte salt), constant-time compare                         | `server/src/auth/password.ts` | `foundation.test.ts` |
-| Password policy: ≥10 chars with a letter and a digit                                                    | `modules/auth/router.ts`      | `foundation.test.ts` |
-| Same error and a dummy hash comparison for unknown emails (no account enumeration by message or timing) | `modules/auth/service.ts`     | `foundation.test.ts` |
-| Session token: 256-bit random; DB stores only SHA-256; 30-day expiry with renewal                       | `server/src/auth/session.ts`  | `http.test.ts`       |
-| Cookie: `HttpOnly`, `SameSite=Lax`, `Secure` in production, path `/`                                    | `trpc/context.ts`             | `http.test.ts`       |
-| Logout deletes the server-side session; forged cookies are ignored                                      | `auth/session.ts`             | `http.test.ts`       |
-| Rate limits: login 10/min per IP and per email; signup 5/min per IP                                     | `auth/rateLimit.ts`           | `foundation.test.ts` |
-| Post-login redirect (`?next=`) restricted to in-app paths                                               | `client/src/lib/nav.ts`       | E2E                  |
+| Control                                                                                                                                                                                                                                                      | Where                         | Verified by                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- | ----------------------------------------- |
+| scrypt password hashing (N=2^15, r=8, p=1, 16-byte salt), constant-time compare                                                                                                                                                                              | `server/src/auth/password.ts` | `foundation.test.ts`                      |
+| Password policy: ≥10 chars with a letter and a digit                                                                                                                                                                                                         | `modules/auth/router.ts`      | `foundation.test.ts`                      |
+| Same error and a dummy hash comparison for unknown emails (no account enumeration by message or timing)                                                                                                                                                      | `modules/auth/service.ts`     | `foundation.test.ts`                      |
+| Session token: 256-bit random; DB stores only SHA-256; 30-day expiry with renewal                                                                                                                                                                            | `server/src/auth/session.ts`  | `http.test.ts`                            |
+| Cookie: `HttpOnly`, `SameSite=Lax`, `Secure` in production, path `/`                                                                                                                                                                                         | `trpc/context.ts`             | `http.test.ts`                            |
+| Logout deletes the server-side session; forged cookies are ignored                                                                                                                                                                                           | `auth/session.ts`             | `http.test.ts`                            |
+| Rate limits: login 10/min per IP and per email; signup 5/min per IP; assistant 20 turns/min per user. Fixed windows stored in PostgreSQL (one atomic upsert per hit), so limits hold across all API instances; identifiers are SHA-256 hashed before storage | `auth/rateLimit.ts`           | `foundation.test.ts`, `ratelimit.test.ts` |
+| Post-login redirect (`?next=`) restricted to in-app paths                                                                                                                                                                                                    | `client/src/lib/nav.ts`       | E2E                                       |
 
 ## Request integrity
 
@@ -113,7 +113,6 @@ dependencies report no known vulnerabilities.
 
 ## Known gaps (not yet implemented)
 
-- **Rate limiting is in-memory** — per process only. A multi-instance deployment needs a shared store (e.g. Postgres or Redis).
 - **No email delivery**: password reset, email verification and invitation emails do not exist. Invitations are shared as links by the inviter.
 - **No MFA / SSO.**
 - **No account deletion / data export** (GDPR workflows). Note: user deletion is currently blocked by the append-only audit trigger (actor reference) — a dedicated anonymization path is required.

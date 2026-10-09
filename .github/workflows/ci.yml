@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Format, lint, typecheck, tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: flowos
+          POSTGRES_PASSWORD: flowos
+          POSTGRES_DB: flowos_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U flowos" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://flowos:flowos@localhost:5432/flowos_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  e2e:
+    name: Browser E2E (production build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: flowos
+          POSTGRES_PASSWORD: flowos
+          POSTGRES_DB: flowos
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U flowos" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://flowos:flowos@localhost:5432/flowos
+      NODE_ENV: production
+      PORT: "3000"
+      APP_ORIGIN: http://localhost:3000
+      STORAGE_DIR: /tmp/flowos-storage
+      E2E_BASE_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npm run db:migrate
+      - name: Start server
+        run: |
+          node dist/server/index.js > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:3000/api/health && exit 0; sleep 1; done
+          cat server.log; exit 1
+      - run: npm run test:e2e
+      - if: failure()
+        run: cat server.log
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: e2e/.artifacts

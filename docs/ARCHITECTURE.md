@@ -33,7 +33,7 @@ server/src/
   app.ts           Express app: security headers, CSRF guard, tRPC + document routes, static client
   index.ts         Process entry: optional migrations, HTTP server, workflow worker
   env.ts           Validated configuration (never prints values)
-  auth/            Password hashing, sessions, rate limiting
+  auth/            Password hashing, sessions, shared (Postgres) rate limiting
   db/              Drizzle schema, client, migration runner
   lib/             Actor, audit writer, outbox emitter, errors, reference validators, pagination
   storage/         Storage adapter interface, local private disk adapter, content sniffing
@@ -156,6 +156,22 @@ browser ──ai.confirmAction(actionId, inputHash)──► checks → guarded 
 - The transcript is append-only so replayed thinking blocks stay valid.
 - Action outcomes (executed / rejected / failed / expired) are reported to the
   model as an `[Action update]` note at the start of the next user message.
+
+## Insights
+
+`modules/insights/service.ts` runs a handful of SQL aggregates over ISO weeks
+(`generate_series` of week starts). Overdue history is reconstructed per week
+end from `created_at`, `due_date` and `completed_at`. Sections that expose
+other people's approvals or workflow internals are gated by `approval:read_all`
+and `workflow:read`. Charts are plain SVG (`client/src/components/charts.tsx`):
+no chart library, validated series tokens `--series-1/2` per theme.
+
+## Rate limiting
+
+`auth/rateLimit.ts` keeps fixed-window counters in the `rate_limits` table and
+updates them with one `INSERT … ON CONFLICT DO UPDATE … RETURNING count`, so
+limits are exact under concurrency and shared by all API instances. Keys are
+`<limiter>:<sha256(identifier)>`. The worker purges expired windows.
 
 ## Command center and search
 

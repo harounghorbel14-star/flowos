@@ -6,6 +6,7 @@ import { dashboardRouter } from "../modules/dashboard/router";
 import { departmentsRouter } from "../modules/departments/router";
 import { documentsRouter } from "../modules/documents/router";
 import { employeesRouter } from "../modules/employees/router";
+import { insightsRouter } from "../modules/insights/router";
 import { notificationsRouter } from "../modules/notifications/router";
 import { orgsRouter } from "../modules/orgs/router";
 import { projectsRouter } from "../modules/projects/router";
@@ -29,6 +30,7 @@ export const appRouter = router({
   workflows: workflowsRouter,
   documents: documentsRouter,
   ai: aiRouter,
+  insights: insightsRouter,
 });
 
 export type AppRouter = typeof appRouter;

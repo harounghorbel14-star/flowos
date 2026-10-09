@@ -29,6 +29,10 @@
   --info: #3b5a86;
   --info-wash: #e2e8f1;
 
+  /* Data series (validated: lightness band, chroma, CVD ΔE, contrast vs chart surface). */
+  --series-1: #0b9b91;
+  --series-2: #eb6834;
+
   --rail: #1b1c1a;
   --rail-ink: #d6d1c4;
   --rail-ink-2: #8f8b80;
@@ -67,6 +71,8 @@
     --good-wash: #1a2e1c;
     --info: #94b1dc;
     --info-wash: #1b2535;
+    --series-1: #19a394;
+    --series-2: #d95926;
     --rail: #0f100e;
     --rail-hover: #1d1e1b;
     --rail-line: #24251f;
@@ -76,6 +82,8 @@
   }
 }
 :root[data-theme="dark"] {
+  --series-1: #19a394;
+  --series-2: #d95926;
   --paper: #141513;
   --paper-raised: #1c1d1a;
   --paper-sunk: #0f100e;
@@ -402,7 +410,8 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   padding: 14px 18px;
   border-bottom: 1px solid var(--line);
 }
@@ -1451,4 +1460,129 @@ dialog.palette::backdrop {
   .assistant-layout {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* ─── Charts ─────────────────────────────────────────────────────────────── */
+.chart {
+  position: relative;
+  width: 100%;
+}
+.chart svg {
+  display: block;
+  overflow: visible;
+}
+.chart svg:focus-visible {
+  box-shadow: var(--focus);
+}
+.chart-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.chart-baseline {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.chart-axis {
+  fill: var(--ink-3);
+  font-size: 11px;
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+.chart-value {
+  fill: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.chart-crosshair {
+  stroke: var(--ink-3);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+/* 2px surface ring drawn outside the 8px marker. */
+.chart-endpoint {
+  stroke: var(--paper-raised);
+  stroke-width: 4;
+  paint-order: stroke;
+}
+.chart-group {
+  cursor: default;
+  outline: none;
+}
+.chart-group.active path {
+  filter: brightness(1.12);
+}
+.chart-group:focus-visible rect {
+  fill: color-mix(in srgb, var(--teal) 8%, transparent);
+}
+.chart-tooltip {
+  position: absolute;
+  top: 4px;
+  min-width: 150px;
+  max-width: 200px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 8px 10px;
+  font-size: 12.5px;
+  pointer-events: none;
+  z-index: 2;
+}
+.chart-tooltip-title {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  margin-bottom: 4px;
+}
+.chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.key-rect {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.key-line {
+  display: inline-block;
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+.chart-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--ink-3);
+  font-size: 13px;
+  pointer-events: none;
+}
+.chart-table summary {
+  cursor: pointer;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  margin-top: 8px;
+}
+.definition {
+  color: var(--ink-3);
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+.delta {
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
 }

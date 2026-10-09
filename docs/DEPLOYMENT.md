@@ -80,9 +80,8 @@ and `Secure` cookies.
 - [ ] Use a managed PostgreSQL with backups and point-in-time recovery.
 - [ ] Mount `STORAGE_DIR` on persistent, backed-up, non-public storage — or implement an S3-compatible `StorageAdapter` (not implemented yet).
 - [ ] Run exactly the replicas you need with `FLOWOS_WORKER=true` on at least one (multiple are safe).
-- [ ] Replace the in-memory rate limiter with a shared store before running more than one API instance.
 - [ ] Run `npm run db:migrate` as a release step, not at boot, when running multiple instances.
 - [ ] Configure log shipping (the server logs to stdout/stderr).
 - [ ] Review [SECURITY.md](SECURITY.md) "Known gaps".
 
-No container image, CI pipeline or infrastructure-as-code exists yet.
+CI: `.github/workflows/ci.yml` runs `npm run check` against a Postgres 16 service and the browser E2E against the production build on every pull request and push to `main`. No container image or infrastructure-as-code exists yet.

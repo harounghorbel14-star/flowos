@@ -20,16 +20,17 @@ the stack choice is explained in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Verification summary
 
-| Gate                                                        | Command                                                 | Result                                                                  |
-| ----------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Formatting                                                  | `npm run format:check`                                  | pass                                                                    |
-| Lint                                                        | `npm run lint`                                          | pass (0 warnings)                                                       |
-| Type check                                                  | `npm run typecheck`                                     | pass                                                                    |
-| Integration tests (real PostgreSQL 16, real migrations)     | `npm test`                                              | 89 / 89 pass                                                            |
-| Production build                                            | `npm run build`                                         | pass                                                                    |
-| Migrations from empty database                              | test global setup + `npm run db:migrate`                | pass (8 migrations)                                                     |
-| Browser E2E (2 users, 24 steps, desktop + mobile + dark)    | `npm run test:e2e`                                      | pass against dev servers and against the production build (`npm start`) |
-| Assistant UI E2E (scripted test provider, real server + DB) | `npm run e2e:ai-harness` + `npm run test:e2e:assistant` | pass (5 steps)                                                          |
+| Gate                                                          | Command                                                 | Result                                                                  |
+| ------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Formatting                                                    | `npm run format:check`                                  | pass                                                                    |
+| Lint                                                          | `npm run lint`                                          | pass (0 warnings)                                                       |
+| Type check                                                    | `npm run typecheck`                                     | pass                                                                    |
+| Integration tests (real PostgreSQL 16, real migrations)       | `npm test`                                              | 98 / 98 pass                                                            |
+| Production build                                              | `npm run build`                                         | pass                                                                    |
+| Migrations from empty database                                | test global setup + `npm run db:migrate`                | pass (9 migrations)                                                     |
+| Browser E2E (2 users, 25 steps, desktop + mobile + dark)      | `npm run test:e2e`                                      | pass against dev servers and against the production build (`npm start`) |
+| CI (GitHub Actions: check gate + E2E on the production build) | `.github/workflows/ci.yml`                              | runs on every pull request (first run: PR #2)                           |
+| Assistant UI E2E (scripted test provider, real server + DB)   | `npm run e2e:ai-harness` + `npm run test:e2e:assistant` | pass (5 steps)                                                          |
 
 ## Features
 
@@ -150,7 +151,7 @@ test double that calls the real tools against the real database).
 | Prepared actions + confirmation                                                                                                           | IMPLEMENTED AND VERIFIED         | hash-bound, user/org-bound, 10-min expiry, single-use, re-authorized at confirm time; chat text cannot confirm |
 | Tool execution history, usage (tokens, cache reads, latency, stop reason, errors)                                                         | IMPLEMENTED AND VERIFIED         | `ai_tool_calls`, `ai_usage`                                                                                    |
 | Refusal handling                                                                                                                          | IMPLEMENTED AND VERIFIED (logic) | partial output discarded, never stored or acted on                                                             |
-| Rate limiting                                                                                                                             | IMPLEMENTED AND VERIFIED         | 20 turns/min per user (in-memory); one turn at a time per conversation                                         |
+| Rate limiting                                                                                                                             | IMPLEMENTED AND VERIFIED         | 20 turns/min per user (shared, Postgres-backed); one turn at a time per conversation                           |
 
 Tools — read: operational snapshot, search people, get person, list tasks,
 get task, list projects, my approvals, search document metadata. Write
@@ -168,11 +169,27 @@ approvals (only visible ones) and documents (respecting restricted
 visibility); quick navigation and create actions. Prefix-ranked `ILIKE`
 queries; no vector search (no concrete need yet).
 
-### Phase J — Company intelligence: PARTIALLY IMPLEMENTED
+### Phase J — Company intelligence: IMPLEMENTED AND VERIFIED (measured trends)
 
-Measured, explainable signals exist (overdue/blocked counts, project risk
-reasons, completed-in-7-days, workflow failure counts). Not implemented:
-trends over time, "what changed this week" summaries, any causal analysis.
+Insights page (`/insights`) and assistant tool `get_weekly_trends`, all from
+direct aggregates with the definition printed under each figure:
+
+- Last 7 days vs the previous 7 (rolling windows): tasks created, tasks completed, approvals decided.
+- 8 ISO weeks of tasks created vs completed (current week marked partial).
+- Open overdue tasks at each week end, **reconstructed** from creation, due
+  and completion dates (stated in the UI; deleted tasks and later reopenings
+  are not reflected).
+- Approval turnaround: weekly median hours to decision; pending count and median age (admins only).
+- Workflow reliability: weekly runs by outcome and the workflows failing in the last 30 days (workflow readers only).
+- Notable changes this week from the audit log (projects, people, departments).
+
+Charts follow a validated palette (teal/orange series checked for lightness,
+chroma, colour-vision separation and contrast in light and dark), have
+hover/keyboard tooltips and a table view.
+
+- Files: `server/src/modules/insights/{service,router}.ts`, `client/src/pages/Insights.tsx`, `client/src/components/charts.tsx`
+- Tests: `insights.test.ts` (5) — weekly counts, overdue reconstruction, rolling windows, turnaround median, permission gating, tenant isolation; E2E step
+- Not implemented: causal analysis (deliberately), forecasting, custom date ranges, per-team breakdowns, historical snapshots (overdue history is reconstructed, not recorded).
 
 ### Phase K — Billing and integrations: NOT IMPLEMENTED
 
@@ -204,10 +221,8 @@ None open. Defects found and fixed during this work:
 
 ## Next recommended phase
 
-1. **Verify the live assistant** with a real `ANTHROPIC_API_KEY`: run a set of
-   representative questions, review answers against the data, check token
-   usage and cache-read rates in `ai_usage`, then mark the adapter verified.
-2. **Production hardening**: shared rate-limit store, email delivery for
-   invitations and password reset, an S3-compatible `StorageAdapter`, CI.
-3. **Phase J** — trends and "what changed this week" from the audit and
-   outbox streams.
+1. **Verify the live assistant** with a real `ANTHROPIC_API_KEY`: run
+   representative questions, compare answers with the data, check token usage
+   and cache reads in `ai_usage`, then mark the adapter verified.
+2. **Production hardening**: email delivery (invitations, password reset),
+   an S3-compatible `StorageAdapter`, a container image and deployment.

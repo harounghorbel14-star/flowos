@@ -57,6 +57,13 @@
       "when": 1791543618713,
       "tag": "0007_ai_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791546347042,
+      "tag": "0008_rate_limits",
+      "breakpoints": true
     }
   ]
 }

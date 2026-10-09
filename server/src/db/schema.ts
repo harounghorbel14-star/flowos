@@ -631,3 +631,16 @@ export const aiUsage = pgTable(
   },
   (t) => [index("ai_usage_org_idx").on(t.orgId, t.createdAt)],
 );
+
+// ─── Rate limiting ───────────────────────────────────────────────────────────
+
+/** Fixed-window counters shared by every API instance. Keys are hashed (no raw emails/IPs). */
+export const rateLimits = pgTable(
+  "rate_limits",
+  {
+    key: text("key").primaryKey(),
+    count: integer("count").notNull(),
+    resetAt: timestamp("reset_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [index("rate_limits_reset_idx").on(t.resetAt)],
+);

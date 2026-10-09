@@ -26,7 +26,7 @@ const PASSWORD = "doc-password-123";
 
 /** Sign in over HTTP and return the session cookie. */
 async function cookieFor(user: TestUser) {
-  resetLimiters();
+  await resetLimiters();
   const res = await fetch(`${base}/api/trpc/auth.login`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-flowos-client": "web" },

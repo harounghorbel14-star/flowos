@@ -6,6 +6,7 @@ import { domainEvents, memberships, workflowRuns, workflowRunSteps, workflows } 
 import type { Actor } from "../../lib/actor";
 import { audit } from "../../lib/audit";
 import { AppError } from "../../lib/errors";
+import { purgeExpiredRateLimits } from "../../auth/rateLimit";
 import { notifyExpiringDocuments } from "../documents/service";
 import { notify } from "../notifications/service";
 import { describeError, executeAction, PermanentError } from "./actions";
@@ -224,6 +225,7 @@ export async function runWorkerOnce(db: Database) {
   const dispatched = await dispatchEvents(db);
   const results = await runDueWorkflows(db);
   const expiryReminders = await notifyExpiringDocuments(db);
+  await purgeExpiredRateLimits(db);
   return { dispatched, results, expiryReminders };
 }
 

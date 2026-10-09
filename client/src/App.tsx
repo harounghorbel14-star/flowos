@@ -11,6 +11,7 @@ import { CommandCenterPage } from "./pages/CommandCenter";
 import { DepartmentsPage } from "./pages/Departments";
 import { DocumentsPage } from "./pages/Documents";
 import { EmployeeDetailPage } from "./pages/EmployeeDetail";
+import { InsightsPage } from "./pages/Insights";
 import { NotFoundPage } from "./pages/NotFound";
 import { NotificationsPage } from "./pages/Notifications";
 import { OnboardingPage } from "./pages/Onboarding";
@@ -89,6 +90,7 @@ function AuthedRoutes({ hasOrg }: { hasOrg: boolean }) {
         <Route path="documents" element={<DocumentsPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="approvals/:id" element={<ApprovalDetailPage />} />
+        <Route path="insights" element={<InsightsPage />} />
         <Route path="assistant" element={<AssistantPage />} />
         <Route path="assistant/:id" element={<AssistantPage />} />
         <Route path="workflows" element={<WorkflowsPage />} />

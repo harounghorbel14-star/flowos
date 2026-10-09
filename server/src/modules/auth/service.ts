@@ -19,7 +19,7 @@ export async function signup(
   input: { email: string; name: string; password: string },
   meta: RequestMeta,
 ) {
-  signupLimiter.consume(`ip:${meta.ip ?? "unknown"}`);
+  await signupLimiter.consume(`ip:${meta.ip ?? "unknown"}`, db);
   const email = normalizeEmail(input.email);
   const existing = await db
     .select({ id: users.id })
@@ -52,8 +52,8 @@ export async function signup(
 
 export async function login(db: Database, input: { email: string; password: string }, meta: RequestMeta) {
   const email = normalizeEmail(input.email);
-  loginLimiter.consume(`ip:${meta.ip ?? "unknown"}`);
-  loginLimiter.consume(`email:${email}`);
+  await loginLimiter.consume(`ip:${meta.ip ?? "unknown"}`, db);
+  await loginLimiter.consume(`email:${email}`, db);
   const [user] = await db
     .select({ id: users.id, email: users.email, name: users.name, passwordHash: users.passwordHash })
     .from(users)
