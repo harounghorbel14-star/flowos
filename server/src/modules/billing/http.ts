@@ -27,7 +27,7 @@ export function billingWebhookRouter() {
       res.status(400).json({ error: "Invalid signature." });
       return;
     }
-    handleStripeEvent(getDb(), event)
+    handleStripeEvent(getDb(), event, gateway)
       .then((outcome) => res.json({ received: true, outcome }))
       .catch((err: unknown) => {
         console.error("[billing] webhook processing failed:", logSafeError(err));

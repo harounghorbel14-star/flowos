@@ -4,8 +4,18 @@ import Stripe from "stripe";
 export interface BillingConfig {
   secretKey: string;
   webhookSecret: string;
-  /** Stripe Price id per paid plan. */
+  /** Stripe Price id used for new checkouts, per paid plan. */
   prices: { TEAM?: string; BUSINESS?: string };
+  /** Older Price ids still mapped to a plan (existing subscribers after a price change). */
+  legacyPrices?: { TEAM?: string[]; BUSINESS?: string[] };
+}
+
+/** The plan a Stripe Price id belongs to, including legacy prices. */
+export function planForPriceId(config: BillingConfig, priceId: string): "TEAM" | "BUSINESS" | null {
+  for (const plan of ["TEAM", "BUSINESS"] as const) {
+    if (config.prices[plan] === priceId || config.legacyPrices?.[plan]?.includes(priceId)) return plan;
+  }
+  return null;
 }
 
 let override: BillingConfig | null | undefined;
@@ -15,9 +25,21 @@ export function billingConfig(): BillingConfig | null {
   if (override !== undefined) return override;
   const secretKey = process.env.STRIPE_SECRET_KEY;
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  const prices = { TEAM: process.env.STRIPE_PRICE_TEAM, BUSINESS: process.env.STRIPE_PRICE_BUSINESS };
-  if (!secretKey || !webhookSecret || (!prices.TEAM && !prices.BUSINESS)) return null;
-  return { secretKey, webhookSecret, prices };
+  // "price_new,price_old": the first is used for checkout, the rest still map existing subscriptions.
+  const list = (v: string | undefined) =>
+    (v ?? "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+  const team = list(process.env.STRIPE_PRICE_TEAM);
+  const business = list(process.env.STRIPE_PRICE_BUSINESS);
+  if (!secretKey || !webhookSecret || (!team[0] && !business[0])) return null;
+  return {
+    secretKey,
+    webhookSecret,
+    prices: { TEAM: team[0], BUSINESS: business[0] },
+    legacyPrices: { TEAM: team.slice(1), BUSINESS: business.slice(1) },
+  };
 }
 
 /** Tests only: force billing on with the given config, off with null, or back to the environment with undefined. */
@@ -39,6 +61,10 @@ export interface BillingGateway {
   createPortalSession(input: { customerId: string; returnUrl: string }): Promise<string>;
   /** Verify the signature and parse the event; throws on an invalid signature or stale timestamp. */
   verifyWebhook(rawBody: Buffer, signatureHeader: string): Stripe.Event;
+  /** The subscription's current state at Stripe, or null if it no longer exists. */
+  retrieveSubscription(id: string): Promise<Stripe.Subscription | null>;
+  /** Whether the customer has any subscription that is not canceled or expired. */
+  hasOpenSubscription(customerId: string): Promise<boolean>;
 }
 
 export class StripeGateway implements BillingGateway {
@@ -83,6 +109,21 @@ export class StripeGateway implements BillingGateway {
       return_url: input.returnUrl,
     });
     return session.url;
+  }
+
+  async retrieveSubscription(id: string) {
+    try {
+      return await this.stripe.subscriptions.retrieve(id);
+    } catch (err) {
+      if (err instanceof Stripe.errors.StripeInvalidRequestError && err.code === "resource_missing")
+        return null;
+      throw err;
+    }
+  }
+
+  async hasOpenSubscription(customerId: string) {
+    const subs = await this.stripe.subscriptions.list({ customer: customerId, status: "all", limit: 20 });
+    return subs.data.some((s) => s.status !== "canceled" && s.status !== "incomplete_expired");
   }
 
   verifyWebhook(rawBody: Buffer, signatureHeader: string) {

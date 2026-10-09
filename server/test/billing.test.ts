@@ -1,7 +1,7 @@
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql as sqlTag } from "drizzle-orm";
 import Stripe from "stripe";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
@@ -15,6 +15,7 @@ import {
   webhookEvents,
 } from "../src/db/schema";
 import { assertWithinLimit } from "../src/modules/billing/entitlements";
+import { purgeOldWebhookEvents } from "../src/modules/billing/service";
 import {
   setBillingConfigForTests,
   setBillingGatewayForTests,
@@ -51,6 +52,15 @@ class RecordingGateway implements BillingGateway {
   verifyWebhook(rawBody: Buffer, signatureHeader: string) {
     return this.real.verifyWebhook(rawBody, signatureHeader);
   }
+  /** Current subscription state "at Stripe", keyed by subscription id. */
+  subs = new Map<string, unknown>();
+  openCustomers = new Set<string>();
+  async retrieveSubscription(id: string) {
+    return (this.subs.get(id) ?? null) as Stripe.Subscription | null;
+  }
+  async hasOpenSubscription(customerId: string) {
+    return this.openCustomers.has(customerId);
+  }
 }
 
 let server: Server;
@@ -76,7 +86,14 @@ let eventSeq = 0;
 function subscriptionEvent(
   type: "customer.subscription.created" | "customer.subscription.updated" | "customer.subscription.deleted",
   customer: string,
-  opts: { price?: string; status?: string; created?: number; id?: string; subId?: string } = {},
+  opts: {
+    price?: string;
+    prices?: string[];
+    status?: string;
+    created?: number;
+    id?: string;
+    subId?: string;
+  } = {},
 ) {
   return {
     id: opts.id ?? `evt_test_${Date.now()}_${eventSeq++}`,
@@ -93,20 +110,35 @@ function subscriptionEvent(
         metadata: {},
         items: {
           object: "list",
-          data: [
-            {
-              id: "si_1",
-              price: { id: opts.price ?? CONFIG.prices.TEAM },
-              current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400,
-            },
-          ],
+          data: (opts.prices ?? [opts.price ?? CONFIG.prices.TEAM!]).map((price, i) => ({
+            id: `si_${i}`,
+            price: { id: price },
+            current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400,
+          })),
         },
       },
     },
   };
 }
 
-async function deliver(event: object, opts: { secret?: string; timestamp?: number } = {}) {
+/**
+ * Deliver a signed event. For subscription events, Stripe's current state is set to the event's
+ * object first (as when the event is fresh), unless `current` says otherwise: "keep" leaves the
+ * current state unchanged (a stale or replayed event), null simulates a deleted subscription.
+ */
+async function deliver(
+  event: object,
+  opts: { secret?: string; timestamp?: number; current?: "keep" | null } = {},
+) {
+  const e = event as { type: string; data: { object: { id: string; status?: string } } };
+  if (e.type.startsWith("customer.subscription.") && opts.current !== "keep") {
+    if (opts.current === null) gateway.subs.delete(e.data.object.id);
+    else
+      gateway.subs.set(e.data.object.id, {
+        ...e.data.object,
+        status: e.type === "customer.subscription.deleted" ? "canceled" : e.data.object.status,
+      });
+  }
   const payload = JSON.stringify(event);
   const signature = Stripe.webhooks.generateTestHeaderString({
     payload,
@@ -257,12 +289,13 @@ describe("Stripe webhooks", () => {
       .where(and(eq(auditEvents.orgId, org.id), eq(auditEvents.action, "billing.subscription_updated")));
     expect(audits).toHaveLength(1);
 
-    // An older update arriving late does not overwrite the newer state.
+    // An older event arriving late (or twice in the same second) cannot roll the state back:
+    // the current state is read from Stripe.
     const stale = subscriptionEvent("customer.subscription.updated", customer, {
       status: "past_due",
       created: now - 60,
     });
-    expect(await (await deliver(stale)).json()).toEqual({ received: true, outcome: "ignored" });
+    await deliver(stale, { current: "keep" });
     expect((await as(owner).billing.status()).subscription?.status).toBe("active");
 
     // Upgrade to Business, then cancellation.
@@ -364,5 +397,113 @@ describe("Stripe webhooks", () => {
       data: { object: { id: "in_2", object: "invoice", customer: "cus_nobody", attempt_count: 1 } },
     });
     expect(await r.json()).toMatchObject({ outcome: "ignored" });
+  });
+
+  it("a second subscription never replaces or downgrades the one granting access", async () => {
+    const { owner, as, customer } = await orgWithCustomer();
+    await deliver(subscriptionEvent("customer.subscription.created", customer, { subId: "sub_A" }));
+    await deliver(
+      subscriptionEvent("customer.subscription.created", customer, {
+        subId: "sub_B",
+        price: CONFIG.prices.BUSINESS,
+      }),
+    );
+    expect((await as(owner).billing.status()).plan).toBe("TEAM");
+    const inbox = await as(owner).notifications.list({});
+    expect(inbox.items.some((n) => n.title.includes("two active subscriptions"))).toBe(true);
+    await deliver(subscriptionEvent("customer.subscription.deleted", customer, { subId: "sub_B" }));
+    expect(await as(owner).billing.status()).toMatchObject({
+      plan: "TEAM",
+      subscription: { status: "active" },
+    });
+  });
+
+  it("checkout is refused while Stripe already has an open subscription for the customer", async () => {
+    const { owner, as, customer } = await orgWithCustomer();
+    gateway.openCustomers.add(customer);
+    await expect(as(owner).billing.checkout({ plan: "TEAM" })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("already exists at Stripe"),
+    });
+  });
+
+  it("plans map across price changes, add-on items and deleted subscriptions", async () => {
+    const { owner, as, customer } = await orgWithCustomer();
+    // Add-on listed first: the plan is still found.
+    await deliver(
+      subscriptionEvent("customer.subscription.created", customer, {
+        prices: ["price_addon", CONFIG.prices.TEAM!],
+      }),
+    );
+    expect((await as(owner).billing.status()).plan).toBe("TEAM");
+    // The operator moves Team to a new price and keeps the old one as legacy.
+    setBillingConfigForTests({
+      ...CONFIG,
+      prices: { ...CONFIG.prices, TEAM: "price_team_v2" },
+      legacyPrices: { TEAM: [CONFIG.prices.TEAM!] },
+    });
+    setBillingGatewayForTests(gateway);
+    await deliver(subscriptionEvent("customer.subscription.updated", customer));
+    expect((await as(owner).billing.status()).plan).toBe("TEAM");
+    // Even with the old price forgotten entirely, a cancellation still applies.
+    setBillingConfigForTests({ ...CONFIG, prices: { ...CONFIG.prices, TEAM: "price_team_v2" } });
+    setBillingGatewayForTests(gateway);
+    await deliver(subscriptionEvent("customer.subscription.deleted", customer));
+    expect(await as(owner).billing.status()).toMatchObject({
+      plan: "FREE",
+      subscription: { status: "canceled" },
+    });
+  });
+
+  it("a subscription that no longer exists at Stripe is treated as canceled", async () => {
+    const { owner, as, customer } = await orgWithCustomer();
+    await deliver(subscriptionEvent("customer.subscription.created", customer));
+    await deliver(subscriptionEvent("customer.subscription.updated", customer), { current: null });
+    expect((await as(owner).billing.status()).plan).toBe("FREE");
+  });
+
+  it("concurrent invitations at the limit cannot exceed it", async () => {
+    const { owner, org, as } = await createOrg();
+    const results = await Promise.allSettled(
+      Array.from({ length: 8 }, (_, i) =>
+        as(owner).orgs.invite({ email: `race${i}-${randomUUID()}@x.test`, role: "MEMBER" }),
+      ),
+    );
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(4); // owner + 4 = Free limit 5
+    const [{ n }] = (
+      await db().execute<{ n: number }>(
+        sqlTag`select count(*)::int as n from invitations where org_id = ${org.id} and accepted_at is null and revoked_at is null`,
+      )
+    ).rows as [{ n: number }];
+    expect(n).toBe(4);
+  });
+
+  it("housekeeping purges webhook event ids older than 90 days only", async () => {
+    await db()
+      .insert(webhookEvents)
+      .values([
+        {
+          provider: "stripe",
+          eventId: `evt_old_${Date.now()}`,
+          type: "x",
+          outcome: "ignored",
+          receivedAt: new Date(Date.now() - 91 * 86_400_000),
+        },
+        { provider: "stripe", eventId: `evt_new_${Date.now()}`, type: "x", outcome: "ignored" },
+      ]);
+    expect(await purgeOldWebhookEvents(db())).toBeGreaterThanOrEqual(1);
+    const left = await db()
+      .select()
+      .from(webhookEvents)
+      .where(sqlTag`${webhookEvents.eventId} like 'evt_old_%'`);
+    expect(left).toHaveLength(0);
+    expect(
+      (
+        await db()
+          .select()
+          .from(webhookEvents)
+          .where(sqlTag`${webhookEvents.eventId} like 'evt_new_%'`)
+      ).length,
+    ).toBeGreaterThan(0);
   });
 });

@@ -153,6 +153,8 @@ export async function uploadDocument(
   try {
     return await db.transaction(async (tx) => {
       await validateMeta(tx, actor, meta);
+      // Authoritative check under the organization lock (the early check above avoids storing bytes needlessly).
+      await assertWithinLimit(tx, actor.orgId, "storage", data.length);
       const [doc] = await tx
         .insert(documents)
         .values({

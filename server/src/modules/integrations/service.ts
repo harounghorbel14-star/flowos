@@ -6,7 +6,7 @@ import {
   webhookUrlProblem,
   type MessagingIntegrationId,
 } from "@shared/integrations";
-import type { Database, Tx } from "../../db/client";
+import { getDb, type Database, type Tx } from "../../db/client";
 import { integrationConnections } from "../../db/schema";
 import { assertCan, can, type Actor } from "../../lib/actor";
 import { audit } from "../../lib/audit";
@@ -70,6 +70,8 @@ function payloadFor(provider: MessagingIntegrationId, text: string) {
   if (provider === "slack") {
     return { text: text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") };
   }
+  // RichTextBlock/TextRun is not Markdown-parsed, so text from records (task titles…) cannot
+  // inject links or formatting into the channel.
   return {
     type: "message",
     attachments: [
@@ -79,7 +81,7 @@ function payloadFor(provider: MessagingIntegrationId, text: string) {
           $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
           type: "AdaptiveCard",
           version: "1.4",
-          body: [{ type: "TextBlock", text, wrap: true }],
+          body: [{ type: "RichTextBlock", inlines: [{ type: "TextRun", text }] }],
         },
       },
     ],
@@ -102,7 +104,7 @@ export async function connectIntegration(
   const values = {
     orgId: actor.orgId,
     provider: input.provider,
-    secretSealed: encryptSecret(url),
+    secretSealed: encryptSecret(url, `${actor.orgId}:${input.provider}`),
     hint: hintFor(url),
     status: "active" as const,
     lastError: null,
@@ -164,10 +166,15 @@ export async function sendMessage(db: Tx, orgId: string, provider: MessagingInte
   if (!encryptionConfigured())
     throw new DeliveryError("Integrations are not configured on this server.", false);
   try {
-    await getTransport()(decryptSecret(conn.secretSealed), payloadFor(provider, text));
+    await getTransport()(
+      decryptSecret(conn.secretSealed, `${orgId}:${provider}`),
+      payloadFor(provider, text),
+    );
   } catch (err) {
     const message = err instanceof DeliveryError ? err.message : "The message could not be sent.";
-    await db
+    // Recorded on a separate connection: the caller's transaction (a workflow step) rolls back on
+    // failure, and the connection's status must still show the problem.
+    await getDb()
       .update(integrationConnections)
       .set({ status: "error", lastError: message, updatedAt: new Date() })
       .where(eq(integrationConnections.id, conn.id));

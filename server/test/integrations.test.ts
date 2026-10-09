@@ -6,7 +6,7 @@ import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { webhookUrlProblem } from "@shared/integrations";
 import { integrationLimiter } from "../src/modules/integrations/service";
 import { integrationConnections, workflowRuns } from "../src/db/schema";
@@ -73,14 +73,31 @@ describe("webhook URL validation (SSRF)", () => {
 });
 
 describe("secret storage", () => {
-  it("encrypts with authentication; tampering is detected", () => {
-    const sealed = encryptSecret(SLACK_URL);
+  it("encrypts with authentication; tampering, truncated tags and moved values are detected", () => {
+    const sealed = encryptSecret(SLACK_URL, "org-a:slack");
     expect(sealed).not.toContain("secretPath");
-    expect(decryptSecret(sealed)).toBe(SLACK_URL);
+    expect(decryptSecret(sealed, "org-a:slack")).toBe(SLACK_URL);
     const [v, iv, tag, data] = sealed.split(".");
     const flipped = Buffer.from(data!, "base64");
     flipped[0] = flipped[0]! ^ 1;
-    expect(() => decryptSecret([v, iv, tag, flipped.toString("base64")].join("."))).toThrow();
+    expect(() => decryptSecret([v, iv, tag, flipped.toString("base64")].join("."), "org-a:slack")).toThrow();
+    const shortTag = Buffer.from(tag!, "base64").subarray(0, 4).toString("base64");
+    expect(() => decryptSecret([v, iv, shortTag, data].join("."), "org-a:slack")).toThrow();
+    // Copied into another organization's row: does not decrypt.
+    expect(() => decryptSecret(sealed, "org-b:slack")).toThrow();
+  });
+
+  it("a malformed key disables integrations instead of failing requests", async () => {
+    const saved = process.env.INTEGRATIONS_ENCRYPTION_KEY;
+    process.env.INTEGRATIONS_ENCRYPTION_KEY = "too-short";
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { owner, as } = await createOrg();
+      expect((await as(owner).integrations.list()).serverConfigured).toBe(false);
+    } finally {
+      process.env.INTEGRATIONS_ENCRYPTION_KEY = saved;
+      vi.restoreAllMocks();
+    }
   });
 });
 
@@ -155,6 +172,8 @@ describe("connections", () => {
     });
     expect(sent[1]!.url).toBe(TEAMS_URL);
     expect(JSON.stringify(sent[1]!.body)).toContain("AdaptiveCard");
+    // Teams text is sent as a plain TextRun (not Markdown), so record text cannot inject links.
+    expect(JSON.stringify(sent[1]!.body)).toContain('"type":"TextRun"');
 
     failWith = new DeliveryError("The webhook no longer exists. Reconnect the integration.", false);
     await expect(as(owner).integrations.test({ provider: "slack" })).rejects.toMatchObject({
@@ -228,6 +247,12 @@ describe("workflow action: send_message", () => {
     await drain();
     [run] = await db().select().from(workflowRuns).where(eq(workflowRuns.id, run!.id));
     expect(run).toMatchObject({ status: "FAILED", error: expect.stringContaining("no longer exists") });
+    // The failure is visible on the connection even though the step's transaction rolled back.
+    const [conn] = await db()
+      .select()
+      .from(integrationConnections)
+      .where(and(eq(integrationConnections.orgId, org.id), eq(integrationConnections.provider, "slack")));
+    expect(conn).toMatchObject({ status: "error", lastError: expect.stringContaining("no longer exists") });
   });
 });
 

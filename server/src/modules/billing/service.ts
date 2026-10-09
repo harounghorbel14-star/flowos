@@ -1,6 +1,6 @@
-import { and, eq, lte, ne, or } from "drizzle-orm";
+import { and, eq, lt, sql } from "drizzle-orm";
 import type Stripe from "stripe";
-import { PLANS, type PlanId } from "@shared/billing";
+import { ENTITLED_STATUSES, PLANS, type PlanId } from "@shared/billing";
 import type { Database, Tx } from "../../db/client";
 import {
   billingCustomers,
@@ -16,7 +16,7 @@ import { assertCan, can, type Actor } from "../../lib/actor";
 import { audit } from "../../lib/audit";
 import { AppError, badRequest } from "../../lib/errors";
 import { getEntitlements, getUsage } from "./entitlements";
-import { billingConfig, getBillingGateway } from "./gateway";
+import { billingConfig, getBillingGateway, planForPriceId, type BillingGateway } from "./gateway";
 
 export async function billingStatus(db: Database, actor: Actor) {
   const [entitlements, usage] = await Promise.all([
@@ -73,10 +73,15 @@ export async function startCheckout(db: Database, actor: Actor, plan: PlanId) {
   const priceId = plan === "FREE" ? undefined : billingConfig()!.prices[plan];
   if (!priceId) throw badRequest("That plan is not available on this server.");
   const e = await getEntitlements(db, actor.orgId);
-  if (e.subscription && e.plan !== "FREE") {
+  const open = e.subscription && !["canceled", "incomplete_expired"].includes(e.subscription.status);
+  if (open) {
     throw badRequest("This organization already has a subscription. Use “Manage billing” to change it.");
   }
   const customerId = await customerFor(db, actor);
+  // Our record can lag behind Stripe (webhook not yet received, e.g. a second browser tab).
+  if (await gateway.hasOpenSubscription(customerId)) {
+    throw badRequest("A subscription for this organization already exists at Stripe. Use “Manage billing”.");
+  }
   const base = `${env().APP_ORIGIN}/settings/billing`;
   const url = await gateway.createCheckoutSession({
     orgId: actor.orgId,
@@ -108,12 +113,23 @@ export async function openPortal(db: Database, actor: Actor) {
   };
 }
 
-function planForPrice(priceId: string | undefined): "TEAM" | "BUSINESS" | null {
-  const prices = billingConfig()?.prices;
-  if (!priceId || !prices) return null;
-  if (priceId === prices.TEAM) return "TEAM";
-  if (priceId === prices.BUSINESS) return "BUSINESS";
-  return null;
+/** In-app notification to every owner of the organization (billing is owner business). */
+async function notifyOwners(tx: Tx, orgId: string, message: { title: string; body: string }) {
+  const owners = await tx
+    .select({ userId: memberships.userId })
+    .from(memberships)
+    .where(and(eq(memberships.orgId, orgId), eq(memberships.role, "OWNER")));
+  for (const o of owners) {
+    await notify(tx, {
+      orgId,
+      userId: o.userId,
+      actorUserId: null,
+      type: "BILLING_ISSUE",
+      title: message.title,
+      body: message.body,
+      link: "/settings/billing",
+    });
+  }
 }
 
 const customerIdOf = (c: string | { id: string } | null) => (typeof c === "string" ? c : (c?.id ?? null));
@@ -135,7 +151,11 @@ export type WebhookOutcome = "applied" | "ignored" | "duplicate";
  * one leaves nothing behind (Stripe retries it). Subscription updates older
  * than the last one applied are ignored (Stripe does not guarantee order).
  */
-export async function handleStripeEvent(db: Database, event: Stripe.Event): Promise<WebhookOutcome> {
+export async function handleStripeEvent(
+  db: Database,
+  event: Stripe.Event,
+  gateway: BillingGateway = requireGateway(),
+): Promise<WebhookOutcome> {
   return db.transaction(async (tx) => {
     const [fresh] = await tx
       .insert(webhookEvents)
@@ -163,21 +183,10 @@ export async function handleStripeEvent(db: Database, event: Stripe.Event): Prom
       orgId = await orgForCustomer(tx, customerId);
       if (orgId) {
         outcome = "applied";
-        const owners = await tx
-          .select({ userId: memberships.userId })
-          .from(memberships)
-          .where(and(eq(memberships.orgId, orgId), eq(memberships.role, "OWNER")));
-        for (const o of owners) {
-          await notify(tx, {
-            orgId,
-            userId: o.userId,
-            actorUserId: null,
-            type: "BILLING_ISSUE",
-            title: "A subscription payment failed",
-            body: "Stripe will retry the payment. Update the payment method under Settings → Billing → Manage billing.",
-            link: "/settings/billing",
-          });
-        }
+        await notifyOwners(tx, orgId, {
+          title: "A subscription payment failed",
+          body: "Stripe will retry the payment. Update the payment method under Settings → Billing → Manage billing.",
+        });
         await audit(
           tx,
           { userId: null, orgId },
@@ -195,17 +204,55 @@ export async function handleStripeEvent(db: Database, event: Stripe.Event): Prom
       event.type === "customer.subscription.updated" ||
       event.type === "customer.subscription.deleted"
     ) {
-      const sub = event.data.object;
+      // Events can arrive late, twice or out of order (one-second timestamps), so the event is
+      // only a signal: the current state is read from Stripe and stored as is.
+      const signalled = event.data.object;
+      const current = await gateway.retrieveSubscription(signalled.id);
+      const sub = current ?? { ...signalled, status: "canceled" as const };
       const customerId = customerIdOf(sub.customer as string | { id: string } | null)!;
       orgId = await orgForCustomer(tx, customerId);
-      const item = sub.items.data[0];
-      const plan = planForPrice(item?.price.id);
-      if (orgId && plan) {
-        const status = event.type === "customer.subscription.deleted" ? "canceled" : sub.status;
+      const [existing] = orgId
+        ? await tx.select().from(subscriptions).where(eq(subscriptions.orgId, orgId)).for("update")
+        : [];
+      // Every item is checked, so add-ons or a reordered list do not hide the plan; a price that is
+      // no longer configured keeps the plan already recorded for this subscription.
+      const config = billingConfig()!;
+      const mapped = sub.items.data
+        .map((i) => planForPriceId(config, i.price.id))
+        .find((p): p is "TEAM" | "BUSINESS" => p !== null);
+      const sameSub = existing?.stripeSubscriptionId === sub.id;
+      const plan = mapped ?? (sameSub ? existing!.plan : null);
+      const entitled = (ENTITLED_STATUSES as readonly string[]).includes(sub.status);
+      const existingEntitled =
+        existing !== undefined && (ENTITLED_STATUSES as readonly string[]).includes(existing.status);
+
+      if (orgId && plan && existing && !sameSub && existingEntitled) {
+        // A second subscription for the same organization. Never let it replace (or, when it ends,
+        // downgrade) the one that grants access; tell the owners so they can cancel the duplicate.
+        outcome = "applied";
+        if (entitled) {
+          await audit(
+            tx,
+            { userId: null, orgId },
+            {
+              action: "billing.duplicate_subscription",
+              entityType: "organization",
+              entityId: orgId,
+              summary: "A second active subscription was detected",
+              metadata: { stripeEventId: event.id, kept: existing.stripeSubscriptionId, duplicate: sub.id },
+            },
+          );
+          await notifyOwners(tx, orgId, {
+            title: "Your organization has two active subscriptions",
+            body: "Cancel the one you do not need in Settings → Billing → Manage billing to avoid paying twice.",
+          });
+        }
+      } else if (orgId && plan) {
+        const item = sub.items.data[0];
         const values = {
           orgId,
           plan,
-          status,
+          status: sub.status,
           stripeCustomerId: customerId,
           stripeSubscriptionId: sub.id,
           currentPeriodEnd: item?.current_period_end ? new Date(item.current_period_end * 1000) : null,
@@ -213,33 +260,22 @@ export async function handleStripeEvent(db: Database, event: Stripe.Event): Prom
           lastEventCreatedAt: eventAt,
           updatedAt: new Date(),
         };
-        const [written] = await tx
+        await tx
           .insert(subscriptions)
           .values(values)
-          .onConflictDoUpdate({
-            target: subscriptions.orgId,
-            set: values,
-            // Ignore stale events; a different (newer) subscription replaces a canceled one.
-            setWhere: or(
-              lte(subscriptions.lastEventCreatedAt, eventAt),
-              and(eq(subscriptions.status, "canceled"), ne(subscriptions.stripeSubscriptionId, sub.id)),
-            ),
-          })
-          .returning({ orgId: subscriptions.orgId });
-        if (written) {
-          outcome = "applied";
-          await audit(
-            tx,
-            { userId: null, orgId },
-            {
-              action: "billing.subscription_updated",
-              entityType: "organization",
-              entityId: orgId,
-              summary: `Subscription ${status}: ${PLANS[plan].name} plan`,
-              metadata: { stripeEventId: event.id, stripeSubscriptionId: sub.id },
-            },
-          );
-        }
+          .onConflictDoUpdate({ target: subscriptions.orgId, set: values });
+        outcome = "applied";
+        await audit(
+          tx,
+          { userId: null, orgId },
+          {
+            action: "billing.subscription_updated",
+            entityType: "organization",
+            entityId: orgId,
+            summary: `Subscription ${sub.status}: ${PLANS[plan].name} plan`,
+            metadata: { stripeEventId: event.id, stripeSubscriptionId: sub.id },
+          },
+        );
       }
     }
 
@@ -253,4 +289,15 @@ export async function handleStripeEvent(db: Database, event: Stripe.Event): Prom
 
 export function assertBillingEnabled() {
   if (!billingConfig()) throw new AppError("NOT_FOUND", "Billing is not enabled on this server.");
+}
+
+/**
+ * Drop webhook event records after 90 days. Stripe retries a delivery for at
+ * most 3 days, so older ids can no longer arrive again.
+ */
+export async function purgeOldWebhookEvents(db: Database): Promise<number> {
+  const result = await db
+    .delete(webhookEvents)
+    .where(lt(webhookEvents.receivedAt, sql`now() - interval '90 days'`));
+  return result.rowCount ?? 0;
 }

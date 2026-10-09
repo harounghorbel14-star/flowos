@@ -13,6 +13,7 @@ import {
   aiUsage,
   documents,
   featureFlags,
+  organizations,
   invitations,
   memberships,
   subscriptions,
@@ -91,13 +92,8 @@ export async function getUsage(db: Tx, orgId: string) {
     db
       .select({ n: count() })
       .from(aiUsage)
-      .where(
-        and(
-          eq(aiUsage.orgId, orgId),
-          isNull(aiUsage.error),
-          gte(aiUsage.createdAt, sql`date_trunc('month', now())`),
-        ),
-      ),
+      // Every model request counts, including failed or aborted ones (they may still be billed).
+      .where(and(eq(aiUsage.orgId, orgId), gte(aiUsage.createdAt, sql`date_trunc('month', now())`))),
   ]);
   return {
     members: Number(m?.n ?? 0),
@@ -125,6 +121,13 @@ type LimitKind = "members" | "workflows" | "storage" | "aiRequests";
  */
 export async function assertWithinLimit(db: Tx, orgId: string, kind: LimitKind, adding = 1) {
   const e = await getEntitlements(db, orgId);
+  // Inside a transaction, serialize limit checks per organization so concurrent requests at the
+  // limit cannot all pass (count-then-insert). The lock is held until the caller commits.
+  await db
+    .select({ id: organizations.id })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .for("update");
   const limit =
     kind === "members"
       ? e.limits.members

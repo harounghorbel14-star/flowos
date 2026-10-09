@@ -113,34 +113,34 @@ export const postJson: Transport = (url, body) =>
         method: "POST",
         headers: { "content-type": "application/json", "content-length": payload.length },
         lookup: safeLookup as never,
-        timeout: 10_000,
+        // Short: deliveries run inside the shared worker, so a slow endpoint must not hold it long.
+        timeout: 5_000,
         ...(testCa ? { ca: testCa } : {}),
       },
       (res) => {
-        // Drain without keeping the body: it may echo the request.
-        res.resume();
-        res.on("end", () => {
-          const status = res.statusCode ?? 0;
-          if (status >= 200 && status < 300) resolve();
-          else if (status >= 300 && status < 400)
-            reject(
-              new DeliveryError(
-                "The service tried to redirect the message; redirects are not followed.",
-                false,
-              ),
-            );
-          else if (status === 429 || status >= 500)
-            reject(new DeliveryError(`The service responded ${status}.`, true));
-          else
-            reject(
-              new DeliveryError(
-                status === 404 || status === 410
-                  ? "The webhook no longer exists. Reconnect the integration."
-                  : `The service rejected the message (${status}).`,
-                false,
-              ),
-            );
-        });
+        const status = res.statusCode ?? 0;
+        // The status is all we need: discard the body without reading it (it may echo the request
+        // or be arbitrarily large).
+        res.destroy();
+        if (status >= 200 && status < 300) resolve();
+        else if (status >= 300 && status < 400)
+          reject(
+            new DeliveryError(
+              "The service tried to redirect the message; redirects are not followed.",
+              false,
+            ),
+          );
+        else if (status === 429 || status >= 500)
+          reject(new DeliveryError(`The service responded ${status}.`, true));
+        else
+          reject(
+            new DeliveryError(
+              status === 404 || status === 410
+                ? "The webhook no longer exists. Reconnect the integration."
+                : `The service rejected the message (${status}).`,
+              false,
+            ),
+          );
       },
     );
     req.on("timeout", () => req.destroy(new Error("timeout")));
