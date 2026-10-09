@@ -1,6 +1,6 @@
 # FLOWOS implementation status
 
-Last verified: 2026-10-09 (stabilization pass), branch `claude/flowos-foundation`.
+Last verified: 2026-10-09 (full stabilization audit), branch `claude/flowos-foundation`. "Locally" below means this build container; "CI" means GitHub Actions. Nothing has been verified in a deployed environment.
 
 ## Initial audit
 
@@ -20,19 +20,20 @@ the stack choice is explained in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Verification summary
 
-| Gate                                                          | Command                                                 | Result                                                                    |
-| ------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Formatting                                                    | `npm run format:check`                                  | pass                                                                      |
-| Lint                                                          | `npm run lint`                                          | pass (0 warnings)                                                         |
-| Type check                                                    | `npm run typecheck`                                     | pass                                                                      |
-| Integration tests (real PostgreSQL 16, real migrations)       | `npm test`                                              | 99 / 99 pass (13 files, including the production-boot test)               |
-| Production build                                              | `npm run build`                                         | pass                                                                      |
-| Migrations from empty database                                | test global setup + `npm run db:migrate`                | pass (9 migrations)                                                       |
-| Browser E2E (2 users, 25 steps, desktop + mobile + dark)      | `npm run test:e2e`                                      | 25 / 25 against the production build started as CI does; 0 console errors |
-| Production boot (bundle + `node`, `NODE_ENV=production`)      | `server/test/boot.test.ts`                              | pass: no boot migration; worker runs the onboarding workflow              |
-| CI (GitHub Actions: check gate + E2E on the production build) | `.github/workflows/ci.yml`                              | runs on every pull request and push to `main`; see the stabilization PR   |
-| Assistant UI E2E (scripted test provider, real server + DB)   | `npm run e2e:ai-harness` + `npm run test:e2e:assistant` | pass (5 steps)                                                            |
-| Assistant against the live Anthropic API                      | `npm run test:live`                                     | **NOT RUN**: no `ANTHROPIC_API_KEY` configured as a secret                |
+| Gate                                                          | Command                                                 | Result                                                                                                                                                       |
+| ------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Formatting                                                    | `npm run format:check`                                  | pass                                                                                                                                                         |
+| Lint                                                          | `npm run lint`                                          | pass (0 warnings)                                                                                                                                            |
+| Type check                                                    | `npm run typecheck`                                     | pass                                                                                                                                                         |
+| Integration tests (real PostgreSQL 16, real migrations)       | `npm test`                                              | 121 / 121 pass (14 files)                                                                                                                                    |
+| Production build                                              | `npm run build`                                         | pass                                                                                                                                                         |
+| Migrations from empty database                                | test global setup + `npm run db:migrate`                | pass (10 migrations; 0009 also verified as an upgrade over data)                                                                                             |
+| Browser E2E (2 users, 25 steps, desktop + mobile + dark)      | `npm run test:e2e`                                      | 26 / 26 against the production build started as CI does; 0 console errors                                                                                    |
+| Production boot (bundle + `node`, `NODE_ENV=production`)      | `server/test/boot.test.ts`                              | pass: no boot migration, worker runs workflows, survives DB connection loss, ready/503, SIGTERM exits 0, port clash exits 1, prod refuses missing APP_ORIGIN |
+| CI (GitHub Actions: check gate + E2E on the production build) | `.github/workflows/ci.yml`                              | runs on every pull request and push to `main`; see the stabilization PR                                                                                      |
+| Assistant UI E2E (scripted test provider, real server + DB)   | `npm run e2e:ai-harness` + `npm run test:e2e:assistant` | pass (5 steps)                                                                                                                                               |
+| Assistant against the live Anthropic API                      | `npm run test:live`                                     | **NOT RUN**: no `ANTHROPIC_API_KEY` configured as a secret                                                                                                   |
+| Responsive/visual audit (Playwright)                          | scripted, not in the repo                               | 24 routes × 375/820/1440 px × light/dark: no overflow, overlap, console or network errors; plus Settings → Account                                           |
 
 ## Features
 
@@ -164,7 +165,7 @@ get task, list projects, my approvals, search document metadata. Write
 
 - Files: `server/src/modules/ai/{provider,tools,assistant,router,http}.ts`, `client/src/pages/Assistant.tsx`, `e2e/{ai-harness.ts,assistant.mjs}`
 - DB: `ai_conversations`, `ai_messages`, `ai_actions`, `ai_tool_calls`, `ai_usage`
-- Tests: `ai.test.ts` (10), `ai-http.test.ts` (1). Mutation check: making `create_task` skip confirmation fails 2 tests.
+- Tests: `ai.test.ts` (15), `ai-http.test.ts` (1). Mutation check: making `create_task` skip confirmation fails 2 tests.
 - Live tests (not run, need a key): `server/test-live/assistant.live.test.ts` (4): grounded answer via a permitted tool, confirmation required before mutation, viewer gets no write tools, no cross-organization data.
 - Not implemented: retrieval over document contents (RAG), structured-output reports, more write tools (approvals, workflows), per-org AI budgets, conversation export.
 
@@ -208,14 +209,18 @@ workflow action registry, and the outbox event stream.
 
 Operational-editorial design system (warm paper/graphite, restrained teal,
 Fraunces + IBM Plex), light/dark, reduced motion, responsive layout with a
-mobile navigation drawer (no horizontal overflow at 390 px — checked in E2E),
-keyboard-accessible dialogs on native `<dialog>`, command palette with
-arrow-key navigation, skeletons, empty and error states, toasts.
-Not done: i18n, formal accessibility audit (WCAG), drag-and-drop.
+mobile navigation drawer (focus moves in on open, Escape closes, not focusable
+when closed), keyboard-accessible dialogs on native `<dialog>`, command
+palette with arrow-key navigation that keeps the selection visible, charts
+announced to screen readers, skeletons, empty and error states on every data
+panel, confirmations before destructive actions, toasts. Dark-mode destructive
+buttons meet 4.5:1 contrast. Checked with a scripted Playwright audit (24
+routes × mobile/tablet/desktop × light/dark) after fixing 18 defects it found.
+Not done: i18n, a formal WCAG audit with assistive technology, drag-and-drop.
 
 ## Known defects
 
-No open code defects. Open security item: the credential committed in `76ad080` must be revoked (SECURITY.md, "Incident"). Defects found and fixed during this work:
+No open code defects known. Open security item: the credential committed in `76ad080` must be revoked by the owner (SECURITY.md, "Incident"). Defects found and fixed during this work:
 
 1. Post-signup redirect raced the auth-route redirect, sending invited users to onboarding instead of back to their invitation (found by E2E).
 2. Workflow dispatcher matched events to workflows created after the event (found by integration tests).
@@ -228,11 +233,32 @@ No open code defects. Open security item: the credential committed in `76ad080` 
 9. CI E2E job set `NODE_ENV=production` for `npm ci`, which skipped devDependencies (`vite: not found`). Now set only on the server step.
 10. `.gitignore` rule `storage/` also ignored `server/src/storage/`, so a clean checkout of `main` did not build; anchored to `/storage/`.
 
+Found by the stabilization audit (backend security, data/ops and UI audits) and fixed, each with a regression test unless noted:
+
+11. A Postgres restart crashed every replica (no pool `error` handler). Pool now also has connect/statement/idle-transaction timeouts. (`boot.test.ts`)
+12. No graceful shutdown: deploys cut requests and worker steps. Now drains HTTP and the worker, then closes the pool. `/api/ready` checks the database. (`boot.test.ts`)
+13. A port clash exited 0 (looked like success); `APP_ORIGIN` silently defaulted in production. Both now fail with exit 1. (`boot.test.ts`)
+14. Workflow runs abandoned on their last attempt were re-claimed forever; now failed and the owner notified. Failed worker ticks back off. (`workflows.test.ts`)
+15. Error logs included every bound query parameter (password hashes, emails). Now SQLSTATE and table only. (`hardening.test.ts`)
+16. Impossible dates (2026-02-31) and NUL bytes produced 500s; now 400. (`hardening.test.ts`)
+17. Members demoted to viewer could still delete their own tasks and comments. (`hardening.test.ts`)
+18. Assistant confirmation cards did not say which task would change. They now name the task, assignee and project, and nothing is prepared for another organization's record. (`ai.test.ts`)
+19. The assistant's per-conversation lock could expire mid-turn and be released by the wrong turn, corrupting the transcript; client disconnects kept spending tokens; history grew without bound. (`ai.test.ts`)
+20. Sessions renewed forever; no password change or "sign out other devices". Now capped at 90 days, with both features in Settings → Account. (`hardening.test.ts`, browser E2E)
+21. Uploads were read (10 MB) before authentication; no upload rate limit. (`documents.test.ts`)
+22. Concurrent invitations could leave several valid links (unique index, migration 0009). Concurrent opposite manager changes could form a cycle (advisory lock; the race did not reproduce in tests, fix from code review). (`hardening.test.ts`)
+23. Missing indexes for session purge, approval and notification lists, and the expiry scan; housekeeping ran every 2 s across all tenants (now once a minute).
+24. Missing assets were answered with the SPA page; hashed assets were cached for only 1 h; source maps were public.
+25. UI: 18 defects (long titles overflowing, board badges clipped, mobile drawer keyboard trap, palette selection off-screen, chart label collisions and wrong scale, charts not announced, swallowed form errors, unclear leave-date errors, dark-mode contrast 2.4:1, unannounced tab/unread states, unnamed toggles, grammar, incomplete audit filter, missing error states, lost `?next=`, unconfirmed deletes, shared Retry spinner). Verified by a scripted visual audit and the browser E2E.
+
+Remaining limitations (not defects in implemented scope, documented in SECURITY.md/DEPLOYMENT.md): no email delivery (so no email verification or password reset), no MFA/SSO, no per-device session list, no S3 storage adapter, no container image or real deployment, document files deleted after the database row (a crash in between leaves an orphan file), `domain_events` are never purged, plain-text logs without request IDs, no route-level code splitting (main bundle ≈405 kB, 115 kB gzipped).
+
 ## Next recommended phase
 
 1. **Revoke the key committed in `76ad080`**, then configure a new one as a
    secret (DEPLOYMENT.md, "Configuring the Anthropic API key") and run
    `npm run test:live`. Only when it passes, mark the Anthropic adapter
    verified. Phase K stays on hold until then.
-2. **Production hardening**: email delivery (invitations, password reset),
-   an S3-compatible `StorageAdapter`, a container image and deployment.
+2. **Production hardening before real customers**: email delivery (invitations,
+   verification, password reset), an S3-compatible `StorageAdapter`, a
+   container image and a staging deployment verified end to end.
