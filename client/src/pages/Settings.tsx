@@ -32,7 +32,7 @@ function SettingsTabs() {
       </NavLink>
       <NavLink to="/settings/members">Members</NavLink>
       {can("audit:read") ? <NavLink to="/settings/audit">Audit log</NavLink> : null}
-      <NavLink to="/settings/account">Your account</NavLink>
+      <NavLink to="/settings/account">Account</NavLink>
     </nav>
   );
 }

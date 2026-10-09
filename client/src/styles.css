@@ -1271,6 +1271,12 @@ dialog.palette::backdrop {
   margin-bottom: -1px;
   white-space: nowrap;
 }
+@media (max-width: 520px) {
+  .tabs a,
+  .tabs button {
+    padding: 8px 8px;
+  }
+}
 .tabs [aria-current="page"],
 .tabs [aria-selected="true"],
 .tabs [aria-pressed="true"] {
