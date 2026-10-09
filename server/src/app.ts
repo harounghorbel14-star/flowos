@@ -3,6 +3,8 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import cookieParser from "cookie-parser";
 import express, { type NextFunction, type Request, type Response } from "express";
 import helmet from "helmet";
+import { sql } from "drizzle-orm";
+import { getDb } from "./db/client";
 import { env, isProduction } from "./env";
 import { aiHttpRouter } from "./modules/ai/http";
 import { documentsHttpRouter } from "./modules/documents/http";
@@ -57,8 +59,26 @@ export function createApp() {
     }),
   );
   app.use(cookieParser());
+  // Liveness: the process is serving HTTP.
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
+  });
+  // Readiness: the database answers within 2 s. Load balancers should route on this.
+  app.get("/api/ready", async (_req, res) => {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        getDb().execute(sql`select 1`),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("timeout")), 2000);
+        }),
+      ]);
+      res.json({ ok: true });
+    } catch {
+      res.status(503).json({ ok: false, error: "database unavailable" });
+    } finally {
+      clearTimeout(timer);
+    }
   });
   app.use(
     "/api/trpc",

@@ -229,18 +229,25 @@ export async function runWorkerOnce(db: Database) {
   return { dispatched, results, expiryReminders };
 }
 
-/** In-process background worker. Ticks never overlap. */
-export function startWorker(db: Database, intervalMs = 2000): () => void {
-  let running = false;
+/**
+ * In-process background worker. Ticks never overlap. The returned function
+ * stops scheduling new ticks and resolves once the tick in progress (if any)
+ * has finished, so shutdown never cuts a step's transaction short.
+ */
+export function startWorker(db: Database, intervalMs = 2000): () => Promise<void> {
+  let current: Promise<void> | null = null;
   const timer = setInterval(() => {
-    if (running) return;
-    running = true;
-    runWorkerOnce(db)
+    if (current) return;
+    current = runWorkerOnce(db)
+      .then(() => undefined)
       .catch((err: unknown) => console.error("[workflows] worker tick failed:", err))
       .finally(() => {
-        running = false;
+        current = null;
       });
   }, intervalMs);
   timer.unref();
-  return () => clearInterval(timer);
+  return async () => {
+    clearInterval(timer);
+    await current;
+  };
 }

@@ -6,7 +6,7 @@ import { createServer } from "node:net";
 import path from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import { build } from "esbuild";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ONBOARDING_TEMPLATE } from "@shared/workflows";
 import { tasks } from "../src/db/schema";
 import { addMember, createOrg, db } from "./helpers";
@@ -21,6 +21,7 @@ const root = path.resolve(import.meta.dirname, "../..");
 let child: ChildProcess | undefined;
 let output = "";
 let outDir: string | undefined;
+let outfile = "";
 
 async function freePort(): Promise<number> {
   const srv = createServer().listen(0);
@@ -40,6 +41,22 @@ async function waitFor<T>(fn: () => Promise<T | undefined>, ms: number, what: st
   throw new Error(`Timed out waiting for ${what}. Server output:\n${output}`);
 }
 
+beforeAll(async () => {
+  // Inside the repo so the bundle's external imports resolve from node_modules.
+  outDir = mkdtempSync(path.join(root, "node_modules", ".flowos-boot-"));
+  outfile = path.join(outDir, "index.js");
+  await build({
+    entryPoints: [path.join(root, "server/src/index.ts")],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: "node22",
+    packages: "external",
+    outfile,
+    logLevel: "silent",
+  });
+});
+
 afterAll(async () => {
   if (child && child.exitCode === null) {
     child.kill("SIGTERM");
@@ -50,20 +67,6 @@ afterAll(async () => {
 
 describe("production boot", () => {
   it("starts the bundled server without migrating and its worker runs workflows", async () => {
-    // Inside the repo so the bundle's external imports resolve from node_modules.
-    outDir = mkdtempSync(path.join(root, "node_modules", ".flowos-boot-"));
-    const outfile = path.join(outDir, "index.js");
-    await build({
-      entryPoints: [path.join(root, "server/src/index.ts")],
-      bundle: true,
-      platform: "node",
-      format: "esm",
-      target: "node22",
-      packages: "external",
-      outfile,
-      logLevel: "silent",
-    });
-
     const port = await freePort();
     child = spawn(process.execPath, [outfile], {
       cwd: root,
@@ -125,5 +128,45 @@ describe("production boot", () => {
     expect(output).toContain("(production)");
     expect(output).not.toContain("Migrations applied");
     expect(output).not.toContain("worker tick failed");
+
+    // Readiness reflects the database.
+    const ready = await fetch(`http://localhost:${port}/api/ready`);
+    expect(ready.status).toBe(200);
+
+    // SIGTERM: finish in-flight work, close the pool, exit 0.
+    const exited = once(child, "exit");
+    child.kill("SIGTERM");
+    const [code] = (await exited) as [number | null];
+    expect(code).toBe(0);
+    expect(output).toContain("Shutdown complete.");
+  }, 60_000);
+
+  it("reports not ready, but stays alive, when the database is unreachable", async () => {
+    const port = await freePort();
+    const proc = spawn(process.execPath, [outfile], {
+      cwd: root,
+      env: {
+        PATH: process.env.PATH,
+        NODE_ENV: "production",
+        DATABASE_URL: "postgres://nobody:nothing@127.0.0.1:1/none",
+        APP_ORIGIN: `http://localhost:${port}`,
+        PORT: String(port),
+        FLOWOS_WORKER: "false",
+      },
+      stdio: "ignore",
+    });
+    try {
+      await waitFor(
+        async () => ((await fetch(`http://localhost:${port}/api/health`)).ok ? true : undefined),
+        15_000,
+        "health check",
+      );
+      const ready = await fetch(`http://localhost:${port}/api/ready`);
+      expect(ready.status).toBe(503);
+      expect(await ready.json()).toEqual({ ok: false, error: "database unavailable" });
+    } finally {
+      proc.kill("SIGTERM");
+      await once(proc, "exit");
+    }
   }, 60_000);
 });
