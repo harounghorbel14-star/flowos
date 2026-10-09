@@ -25,13 +25,19 @@ export function env(): Env {
       const names = parsed.error.issues.map((i) => i.path.join(".")).join(", ");
       throw new Error(`Invalid environment configuration: ${names}`);
     }
-    if (parsed.data.NODE_ENV === "production") {
-      const missing = REQUIRED_IN_PRODUCTION.filter((name) => !process.env[name]);
-      if (missing.length) throw new Error(`Missing required production configuration: ${missing.join(", ")}`);
-    }
     cached = parsed.data;
   }
   return cached;
 }
 
 export const isProduction = () => env().NODE_ENV === "production";
+
+/**
+ * The web server's extra production requirements. Only the server checks them:
+ * release tools (migrations, seed, flags) need just the database.
+ */
+export function assertServerConfig() {
+  if (env().NODE_ENV !== "production") return;
+  const missing = REQUIRED_IN_PRODUCTION.filter((name) => !process.env[name]);
+  if (missing.length) throw new Error(`Missing required production configuration: ${missing.join(", ")}`);
+}

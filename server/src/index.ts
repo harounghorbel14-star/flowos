@@ -1,7 +1,7 @@
 import { createApp, markDraining } from "./app";
 import { runMigrations } from "./db/migrate";
 import { closeDb, getDb } from "./db/client";
-import { env } from "./env";
+import { assertServerConfig, env } from "./env";
 import { startWorker } from "./modules/workflows/engine";
 
 /** How long a shutdown may wait for in-flight requests and the worker tick. */
@@ -9,6 +9,7 @@ const SHUTDOWN_GRACE_MS = 10_000;
 
 async function main() {
   const config = env();
+  assertServerConfig();
   // Migrations are an explicit step (npm run db:migrate). Opt in for single-instance setups.
   if (process.env.FLOWOS_MIGRATE_ON_START === "true") await runMigrations();
   const app = createApp();
