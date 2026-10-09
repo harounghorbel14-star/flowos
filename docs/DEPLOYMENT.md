@@ -84,4 +84,4 @@ and `Secure` cookies.
 - [ ] Configure log shipping (the server logs to stdout/stderr).
 - [ ] Review [SECURITY.md](SECURITY.md) "Known gaps".
 
-CI: `.github/workflows/ci.yml` runs `npm run check` against a Postgres 16 service and the browser E2E against the production build on every pull request and push to `main` (GitHub Actions must be enabled for the repository). No container image or infrastructure-as-code exists yet.
+CI: `.github/workflows/ci.yml` runs `npm run check` against a Postgres 16 service and the browser E2E against the production build on every pull request and push to `main`. No container image or infrastructure-as-code exists yet.

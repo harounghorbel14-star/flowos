@@ -20,17 +20,17 @@ the stack choice is explained in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Verification summary
 
-| Gate                                                          | Command                                                 | Result                                                                                                       |
-| ------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Formatting                                                    | `npm run format:check`                                  | pass                                                                                                         |
-| Lint                                                          | `npm run lint`                                          | pass (0 warnings)                                                                                            |
-| Type check                                                    | `npm run typecheck`                                     | pass                                                                                                         |
-| Integration tests (real PostgreSQL 16, real migrations)       | `npm test`                                              | 98 / 98 pass                                                                                                 |
-| Production build                                              | `npm run build`                                         | pass                                                                                                         |
-| Migrations from empty database                                | test global setup + `npm run db:migrate`                | pass (9 migrations)                                                                                          |
-| Browser E2E (2 users, 25 steps, desktop + mobile + dark)      | `npm run test:e2e`                                      | pass against dev servers and against the production build (`npm start`)                                      |
-| CI (GitHub Actions: check gate + E2E on the production build) | `.github/workflows/ci.yml`                              | **not yet run** — GitHub has not started any run on PR #1; Actions appears to be disabled for the repository |
-| Assistant UI E2E (scripted test provider, real server + DB)   | `npm run e2e:ai-harness` + `npm run test:e2e:assistant` | pass (5 steps)                                                                                               |
+| Gate                                                          | Command                                                 | Result                                                                  |
+| ------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Formatting                                                    | `npm run format:check`                                  | pass                                                                    |
+| Lint                                                          | `npm run lint`                                          | pass (0 warnings)                                                       |
+| Type check                                                    | `npm run typecheck`                                     | pass                                                                    |
+| Integration tests (real PostgreSQL 16, real migrations)       | `npm test`                                              | 98 / 98 pass                                                            |
+| Production build                                              | `npm run build`                                         | pass                                                                    |
+| Migrations from empty database                                | test global setup + `npm run db:migrate`                | pass (9 migrations)                                                     |
+| Browser E2E (2 users, 25 steps, desktop + mobile + dark)      | `npm run test:e2e`                                      | pass against dev servers and against the production build (`npm start`) |
+| CI (GitHub Actions: check gate + E2E on the production build) | `.github/workflows/ci.yml`                              | runs on every pull request (first run: PR #2)                           |
+| Assistant UI E2E (scripted test provider, real server + DB)   | `npm run e2e:ai-harness` + `npm run test:e2e:assistant` | pass (5 steps)                                                          |
 
 ## Features
 
@@ -221,9 +221,8 @@ None open. Defects found and fixed during this work:
 
 ## Next recommended phase
 
-1. **Enable GitHub Actions** for the repository so the CI workflow runs on PR #1.
-2. **Verify the live assistant** with a real `ANTHROPIC_API_KEY`: run
+1. **Verify the live assistant** with a real `ANTHROPIC_API_KEY`: run
    representative questions, compare answers with the data, check token usage
    and cache reads in `ai_usage`, then mark the adapter verified.
-3. **Production hardening**: email delivery (invitations, password reset),
+2. **Production hardening**: email delivery (invitations, password reset),
    an S3-compatible `StorageAdapter`, a container image and deployment.
