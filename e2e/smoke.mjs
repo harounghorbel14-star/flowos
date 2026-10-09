@@ -296,6 +296,41 @@ async function step(name, fn) {
       throw new Error(`unexpected chart label ${label}`);
   });
 
+  await step("insights range and department breakdown", async () => {
+    await a.getByRole("button", { name: "12 weeks" }).click();
+    await a.waitForURL(/weeks=12/);
+    await a.getByRole("heading", { name: "Tasks by department" }).waitFor();
+    const cols = await a.locator(".chart g[aria-label]").count();
+    if (cols < 12) throw new Error(`expected 12 weekly columns, found ${cols}`);
+  });
+
+  await step("billing shows the self-hosted plan (no Stripe configured)", async () => {
+    await a.goto(`${BASE}/settings/billing`);
+    await a.getByText("Self-hosted (billing not enabled)").waitFor();
+    await a.getByText("Billing is not enabled on this server: no limits apply.").waitFor();
+  });
+
+  await step("owner connects Slack; planned integrations are not offered", async () => {
+    await a.goto(`${BASE}/settings/integrations`);
+    await a.getByRole("heading", { name: "Slack" }).waitFor();
+    const planned = a.locator(".plan-card", { has: a.getByRole("heading", { name: "HubSpot" }) });
+    await planned.getByText("Not available yet").waitFor();
+    if ((await a.getByText("Integrations are not configured on this server").count()) > 0) {
+      // Server started without INTEGRATIONS_ENCRYPTION_KEY: connecting must be impossible.
+      if ((await a.getByRole("button", { name: "Connect" }).count()) > 0)
+        throw new Error("connect offered without key");
+      return;
+    }
+    const slack = a.locator(".plan-card", { has: a.getByRole("heading", { name: "Slack" }) });
+    await slack
+      .getByLabel("Webhook URL")
+      .fill("https://hooks.slack.com/services/T0E2E/B0E2E/e2eNotARealHook");
+    await slack.getByRole("button", { name: "Connect" }).click();
+    await slack.getByText("Connected", { exact: true }).waitFor();
+    await slack.getByText("hooks.slack.com/…/Hook").waitFor();
+    if ((await a.content()).includes("e2eNotARealHook")) throw new Error("webhook URL leaked to the page");
+  });
+
   await step("assistant honestly reports it is not configured (no API key)", async () => {
     await a.goto(`${BASE}/assistant`);
     await a.getByText("The AI assistant is not configured on this server").waitFor();

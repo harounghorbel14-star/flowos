@@ -73,7 +73,8 @@ jobs:
         env:
           NODE_ENV: production
         run: |
-          node dist/server/index.js > server.log 2>&1 &
+          # A throwaway key generated per run, so the integrations flow is exercised.
+          INTEGRATIONS_ENCRYPTION_KEY="$(openssl rand -base64 32)" node dist/server/index.js > server.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://localhost:3000/api/health && exit 0; sleep 1; done
           cat server.log; exit 1
       - run: npm run test:e2e
