@@ -1,5 +1,5 @@
 import { Copy, Link2, Trash2, UserPlus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, useNavigate, useSearchParams } from "react-router-dom";
 import { ROLES, label, type Role } from "@shared/domain";
 import { FEATURE_LABELS } from "@shared/billing";
@@ -26,8 +26,15 @@ import { errorMessage, fieldErrors, formError, trpc, type RouterOutputs } from "
 
 function SettingsTabs() {
   const { can } = useOrg();
+  const ref = useRef<HTMLElement>(null);
+  // On narrow screens the tab row scrolls; keep the current section visible.
+  useEffect(() => {
+    ref.current
+      ?.querySelector<HTMLElement>('[aria-current="page"]')
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, []);
   return (
-    <nav className="tabs" aria-label="Settings sections">
+    <nav className="tabs" aria-label="Settings sections" ref={ref}>
       <NavLink to="/settings" end>
         Organization
       </NavLink>
@@ -642,6 +649,16 @@ function UsageRow({
   limit: number | null;
   format?: (n: number) => string;
 }) {
+  if (limit === 0) {
+    return (
+      <div className="usage-row">
+        <div className="spread">
+          <span>{label}</span>
+          <span className="muted">Not included in this plan</span>
+        </div>
+      </div>
+    );
+  }
   const pct = limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
   return (
     <div className="usage-row">

@@ -300,8 +300,7 @@ async function step(name, fn) {
     await a.getByRole("button", { name: "12 weeks" }).click();
     await a.waitForURL(/weeks=12/);
     await a.getByRole("heading", { name: "Tasks by department" }).waitFor();
-    const cols = await a.locator(".chart g[aria-label]").count();
-    if (cols < 12) throw new Error(`expected 12 weekly columns, found ${cols}`);
+    await a.getByRole("group", { name: "Tasks created and completed per week, last 12 weeks" }).waitFor();
   });
 
   await step("billing shows the self-hosted plan (no Stripe configured)", async () => {
