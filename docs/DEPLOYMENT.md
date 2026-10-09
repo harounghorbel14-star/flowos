@@ -70,10 +70,16 @@ The harness is test-only code in `e2e/`; it is not part of the build.
 
 ```bash
 npm ci
-npm run build                 # dist/client (static) + dist/server/index.js
-npm run db:migrate            # with production DATABASE_URL
+npm run build                 # dist/client + dist/server/{index,migrate,seed,flags}.js
+npm run migrate:prod          # bundled migrations (no dev dependencies needed)
 NODE_ENV=production APP_ORIGIN=https://app.example.com npm start
 ```
+
+A container image is provided (`Dockerfile`); staging instructions, the
+recommended platform and the smoke test are in [STAGING.md](STAGING.md).
+Demo data (`npm run db:seed`, or `node dist/server/seed.js` in the image)
+refuses `NODE_ENV=production` unless `FLOWOS_ALLOW_DEMO_SEED=true`; never seed
+a database used by real people. Manual browser tests: [WEB_TESTING_GUIDE.md](WEB_TESTING_GUIDE.md).
 
 The server serves the built client and the API from one origin. The server
 never migrates at boot unless `FLOWOS_MIGRATE_ON_START=true`. Verified
