@@ -20,20 +20,20 @@ the stack choice is explained in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Verification summary
 
-| Gate                                                          | Command                                                 | Result                                                                                                                                                       |
-| ------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Formatting                                                    | `npm run format:check`                                  | pass                                                                                                                                                         |
-| Lint                                                          | `npm run lint`                                          | pass (0 warnings)                                                                                                                                            |
-| Type check                                                    | `npm run typecheck`                                     | pass                                                                                                                                                         |
-| Integration tests (real PostgreSQL 16, real migrations)       | `npm test`                                              | 121 / 121 pass (14 files)                                                                                                                                    |
-| Production build                                              | `npm run build`                                         | pass                                                                                                                                                         |
-| Migrations from empty database                                | test global setup + `npm run db:migrate`                | pass (10 migrations; 0009 also verified as an upgrade over data)                                                                                             |
-| Browser E2E (2 users, 25 steps, desktop + mobile + dark)      | `npm run test:e2e`                                      | 26 / 26 against the production build started as CI does; 0 console errors                                                                                    |
-| Production boot (bundle + `node`, `NODE_ENV=production`)      | `server/test/boot.test.ts`                              | pass: no boot migration, worker runs workflows, survives DB connection loss, ready/503, SIGTERM exits 0, port clash exits 1, prod refuses missing APP_ORIGIN |
-| CI (GitHub Actions: check gate + E2E on the production build) | `.github/workflows/ci.yml`                              | runs on every pull request and push to `main`; see the stabilization PR                                                                                      |
-| Assistant UI E2E (scripted test provider, real server + DB)   | `npm run e2e:ai-harness` + `npm run test:e2e:assistant` | pass (5 steps)                                                                                                                                               |
-| Assistant against the live Anthropic API                      | `npm run test:live`                                     | **NOT RUN**: no `ANTHROPIC_API_KEY` configured as a secret                                                                                                   |
-| Responsive/visual audit (Playwright)                          | scripted, not in the repo                               | 24 routes × 375/820/1440 px × light/dark: no overflow, overlap, console or network errors; plus Settings → Account                                           |
+| Gate                                                          | Command                                                 | Result                                                                                                                                                                                       |
+| ------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Formatting                                                    | `npm run format:check`                                  | pass                                                                                                                                                                                         |
+| Lint                                                          | `npm run lint`                                          | pass (0 warnings)                                                                                                                                                                            |
+| Type check                                                    | `npm run typecheck`                                     | pass                                                                                                                                                                                         |
+| Integration tests (real PostgreSQL 16, real migrations)       | `npm test`                                              | 149 / 149 pass (16 files)                                                                                                                                                                    |
+| Production build                                              | `npm run build`                                         | pass                                                                                                                                                                                         |
+| Migrations from empty database                                | test global setup + `npm run db:migrate`                | pass (13 migrations; 0009 also verified as an upgrade over data)                                                                                                                             |
+| Browser E2E (2 users, 29 steps, desktop + mobile + dark)      | `npm run test:e2e`                                      | 29 / 29 against the production build started as CI does, with and without the integrations key; 0 console errors                                                                             |
+| Production boot (bundle + `node`, `NODE_ENV=production`)      | `server/test/boot.test.ts`                              | pass: no boot migration, worker runs workflows, survives DB connection loss, ready/503, SIGTERM exits 0, port clash exits 1, prod refuses missing APP_ORIGIN                                 |
+| CI (GitHub Actions: check gate + E2E on the production build) | `.github/workflows/ci.yml`                              | runs on every pull request and push to `main`; see the stabilization PR                                                                                                                      |
+| Assistant UI E2E (scripted test provider, real server + DB)   | `npm run e2e:ai-harness` + `npm run test:e2e:assistant` | pass (5 steps)                                                                                                                                                                               |
+| Assistant against the live Anthropic API                      | `npm run test:live`                                     | **NOT RUN**: no `ANTHROPIC_API_KEY` configured as a secret                                                                                                                                   |
+| Responsive/visual audit (Playwright)                          | scripted, not in the repo                               | 24 routes × 375/820/1440 px × light/dark: no overflow, overlap, console or network errors; plus Settings → Account; Billing, Integrations and Insights (12 weeks) re-checked after Phase J/K |
 
 ## Features
 
@@ -196,14 +196,25 @@ hover/keyboard tooltips and a table view.
 
 - Files: `server/src/modules/insights/{service,router}.ts`, `client/src/pages/Insights.tsx`, `client/src/components/charts.tsx`
 - Tests: `insights.test.ts` (5) — weekly counts, overdue reconstruction, rolling windows, turnaround median, permission gating, tenant isolation; E2E step
-- Not implemented: causal analysis (deliberately), forecasting, custom date ranges, per-team breakdowns, historical snapshots (overdue history is reconstructed, not recorded).
+- Completed in this pass: **measured history** — the worker records open, overdue and blocked tasks and pending approvals per organization hourly (`metric_snapshots`, migration 0010), and each past week's overdue figure is shown as measured when a snapshot exists, reconstructed otherwise (labelled per week); **tasks by department** (assignee's department); **4 / 8 / 12-week ranges**.
+- Tests: +3 in `insights.test.ts` (snapshots upsert and measured-over-reconstructed, department breakdown with tenant isolation, ranges); E2E step.
+- Not implemented: causal analysis (deliberately), forecasting, arbitrary date ranges, history before snapshots began (reconstructed).
 
-### Phase K — Billing and integrations: NOT IMPLEMENTED
+### Phase K — Billing and integrations: PARTIALLY IMPLEMENTED
 
-Reason: deliberately deferred until the core product is stable. No Stripe,
-Google Workspace, Microsoft 365, Slack, Teams, QuickBooks, HubSpot or WhatsApp
-code exists. Extension points that exist today: `StorageAdapter`, the
-workflow action registry, and the outbox event stream.
+| Area                                                                    | Status                             | Notes                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Plans, entitlements, usage limits                                       | IMPLEMENTED AND VERIFIED           | Free / Team / Business (`shared/billing.ts`); limits on members (incl. open invitations), workflows, storage, assistant requests per month; enforced in the services. Limits are launch defaults, not validated pricing. Billing off (no `STRIPE_*`) = self-hosted, no limits |
+| Feature flags                                                           | IMPLEMENTED AND VERIFIED           | per-organization operator overrides (`npm run flags`), not editable by members                                                                                                                                                                                                |
+| Stripe checkout, customer portal                                        | IMPLEMENTED BUT UNVERIFIED         | code path tested with a test double; **never called against Stripe** (no keys in this environment)                                                                                                                                                                            |
+| Stripe webhooks (verified, idempotent, ordered)                         | IMPLEMENTED AND VERIFIED (offline) | signatures verified with the Stripe SDK's own code over the raw body; event ids recorded with their effect; stale events ignored; untrusted org ids rejected. Not yet received from a real Stripe account                                                                     |
+| Slack, Microsoft Teams (incoming webhooks)                              | IMPLEMENTED BUT UNVERIFIED         | connect, encrypted URL storage, SSRF-safe host allow-list, test message, workflow action `send_message` with permanent/retryable failures. Tested against a local HTTP server and a recording transport; **not yet posted to a real Slack or Teams channel**                  |
+| Google Workspace, Microsoft 365, HubSpot, QuickBooks, WhatsApp Business | ARCHITECTURE ONLY                  | listed as "Not available yet"; `OAuthIntegration` interface in `modules/integrations/providers.ts`; no OAuth flow, sync or token storage exists                                                                                                                               |
+
+- Files: `shared/{billing,integrations}.ts`, `server/src/modules/{billing,integrations}/*`, `server/src/lib/crypto.ts`, `server/src/db/flags-cli.ts`, `client/src/pages/Settings.tsx` (Billing, Integrations)
+- DB: migrations 0011 (`subscriptions`, `billing_customers`, `webhook_events`, `feature_flags`) and 0012 (`integration_connections`)
+- Tests: `billing.test.ts` (8), `integrations.test.ts` (17); browser E2E steps for billing (self-hosted) and connecting Slack
+- To verify for real: set the `STRIPE_*` variables with test-mode keys, add the webhook endpoint in Stripe, complete a test checkout; connect a real Slack/Teams webhook and send a test message (DEPLOYMENT.md).
 
 ### Design and UX: IMPLEMENTED AND VERIFIED (E2E + visual review)
 
@@ -255,10 +266,17 @@ Remaining limitations (not defects in implemented scope, documented in SECURITY.
 
 ## Next recommended phase
 
-1. **Revoke the key committed in `76ad080`**, then configure a new one as a
-   secret (DEPLOYMENT.md, "Configuring the Anthropic API key") and run
-   `npm run test:live`. Only when it passes, mark the Anthropic adapter
-   verified. Phase K stays on hold until then.
-2. **Production hardening before real customers**: email delivery (invitations,
-   verification, password reset), an S3-compatible `StorageAdapter`, a
-   container image and a staging deployment verified end to end.
+1. **Revoke the key committed in `76ad080`**, configure a new one as a secret
+   (DEPLOYMENT.md, "Configuring the Anthropic API key") and run
+   `npm run test:live`.
+2. **Verify Phase K against the real services** in test mode: Stripe checkout,
+   portal and webhooks; a real Slack and Teams channel (DEPLOYMENT.md,
+   "Billing" and "Integrations"). Review the plan limits before selling.
+3. **OAuth integrations** (Google Workspace, Microsoft 365, HubSpot,
+   QuickBooks, WhatsApp Business) only with a concrete customer need, each
+   with the OAuth flow, token refresh, sync and tests described in
+   `modules/integrations/providers.ts`.
+4. **Production hardening before real customers**: email delivery
+   (invitations, verification, password reset), an S3-compatible
+   `StorageAdapter`, a container image and a staging deployment verified end
+   to end.

@@ -50,17 +50,21 @@ The harness is test-only code in `e2e/`; it is not part of the build.
 
 ## Configuration
 
-| Variable                  | Required       | Default                 | Purpose                                                                                                                                                                   |
-| ------------------------- | -------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`            | yes            | —                       | PostgreSQL connection string                                                                                                                                              |
-| `APP_ORIGIN`              | yes in prod    | `http://localhost:5173` | Public origin; mutations from other origins are rejected. The server refuses to start in production without it                                                            |
-| `NODE_ENV`                |                | `development`           | `production` enables secure cookies, masked errors, static client serving                                                                                                 |
-| `PORT`                    |                | `3000`                  | HTTP port                                                                                                                                                                 |
-| `TRUST_PROXY`             | behind a proxy | `0`                     | Number of reverse-proxy hops to trust for client IPs. Leaving it 0 behind a load balancer makes every client share one rate-limit bucket (logged as a warning at startup) |
-| `STORAGE_DIR`             |                | `./storage`             | Private document storage directory (must not be web-served; back it up)                                                                                                   |
-| `FLOWOS_MIGRATE_ON_START` |                | `false`                 | Apply migrations at boot — only for single-instance setups                                                                                                                |
-| `FLOWOS_WORKER`           |                | `true`                  | Run the workflow/expiry worker in this process                                                                                                                            |
-| `ANTHROPIC_API_KEY`       |                | —                       | Enables the AI assistant (server-side only). Unset: assistant shows "not configured"                                                                                      |
+| Variable                                     | Required       | Default                 | Purpose                                                                                                                                                                                            |
+| -------------------------------------------- | -------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                               | yes            | —                       | PostgreSQL connection string                                                                                                                                                                       |
+| `APP_ORIGIN`                                 | yes in prod    | `http://localhost:5173` | Public origin; mutations from other origins are rejected. The server refuses to start in production without it                                                                                     |
+| `NODE_ENV`                                   |                | `development`           | `production` enables secure cookies, masked errors, static client serving                                                                                                                          |
+| `PORT`                                       |                | `3000`                  | HTTP port                                                                                                                                                                                          |
+| `TRUST_PROXY`                                | behind a proxy | `0`                     | Number of reverse-proxy hops to trust for client IPs. Leaving it 0 behind a load balancer makes every client share one rate-limit bucket (logged as a warning at startup)                          |
+| `STORAGE_DIR`                                |                | `./storage`             | Private document storage directory (must not be web-served; back it up)                                                                                                                            |
+| `FLOWOS_MIGRATE_ON_START`                    |                | `false`                 | Apply migrations at boot — only for single-instance setups                                                                                                                                         |
+| `FLOWOS_WORKER`                              |                | `true`                  | Run the workflow/expiry worker in this process                                                                                                                                                     |
+| `ANTHROPIC_API_KEY`                          |                | —                       | Enables the AI assistant (server-side only). Unset: assistant shows "not configured"                                                                                                               |
+| `INTEGRATIONS_ENCRYPTION_KEY`                |                | —                       | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts integration secrets at rest. Unset: integrations cannot be connected. Losing it makes stored connections unreadable (reconnect them) |
+| `STRIPE_SECRET_KEY`                          | for billing    | —                       | Enables billing together with the next three. All unset: self-hosted mode, no plan limits                                                                                                          |
+| `STRIPE_WEBHOOK_SECRET`                      | for billing    | —                       | Signing secret of the webhook endpoint (`whsec_…`)                                                                                                                                                 |
+| `STRIPE_PRICE_TEAM`, `STRIPE_PRICE_BUSINESS` | for billing    | —                       | Stripe Price ids for the paid plans (at least one)                                                                                                                                                 |
 
 ## Production build
 
@@ -115,6 +119,20 @@ organization in tool results or answers.
 - _Database restored from backup:_ run `npm run db:migrate` (idempotent), then start the app. Document files in `STORAGE_DIR` must come from a backup taken at the same time; a record whose file is missing returns an error on download.
 - _Stuck workflow runs:_ runs left `RUNNING` by a dead process are re-claimed after their 5-minute lock expires, or failed if it was their last attempt. Failed runs can be retried from the workflow page.
 - _Assistant conversation stuck "answering":_ its lock expires after 3 minutes without renewal.
+
+## Billing (Stripe)
+
+1. In Stripe (test mode first), create a Product with a recurring Price for each paid plan and note the Price ids.
+2. Add a webhook endpoint `https://<APP_ORIGIN>/api/billing/stripe/webhook` listening to `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`; copy its signing secret.
+3. Set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_TEAM`/`STRIPE_PRICE_BUSINESS`, run `npm run db:migrate`, restart.
+4. Verify: as an owner, Settings → Billing → choose a plan, pay with a Stripe test card, and check the plan changes after the webhook arrives (Stripe dashboard → webhook deliveries should show 200).
+5. Enable the Customer Portal in Stripe settings for "Manage billing".
+
+Feature flags (operator only): `npm run flags -- set <orgId> assistant on "beta"`, `list`, `clear`.
+
+## Integrations (Slack, Microsoft Teams)
+
+Set `INTEGRATIONS_ENCRYPTION_KEY` (keep it in the secret store and back it up). Admins connect a channel in Settings → Integrations with the provider's incoming-webhook URL and use "Send test message" to verify. Messages are sent by workflows with the "Post a message to Slack or Teams" action; delivery is at least once (a crash between sending and recording can repeat a message). Only `hooks.slack.com` and Microsoft webhook hosts are accepted.
 
 ## Rotating the Anthropic API key
 

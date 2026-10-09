@@ -136,12 +136,19 @@ cannot execute writes without the user's confirmation.
   Slack, Stripe and Google keys and PEM private keys found no other credential.
   The only `.env*` file ever tracked is `.env.example`.
 
+## Billing and integrations
+
+- Stripe webhooks are authenticated by the signature over the raw body (Stripe SDK, 300 s tolerance) and are not CSRF-guarded; unverifiable requests get 400 and nothing is recorded. Each event id is stored in the same transaction as its effect, so redelivery is a no-op; older subscription events never overwrite newer state; an organization id claimed by an event is used only if the Stripe customer belongs to it (`billing.test.ts`).
+- Only owners (`billing:manage`) start checkout or open the portal. Plan limits and features are enforced in the services, not the UI. Feature flags are operator-only.
+- Integration secrets (webhook URLs) are AES-256-GCM encrypted with `INTEGRATIONS_ENCRYPTION_KEY`, never returned by the API (a hint is shown), and tampering is detected. Webhook URLs must be HTTPS on 443 to the provider's own hosts (no internal addresses, credentials or redirects), which prevents SSRF. Delivery errors never echo the provider's response (`integrations.test.ts`).
+- Only admins and owners (`integration:manage`) connect or disconnect integrations; connecting and disconnecting are audited.
+
 ## Dependency audit
 
 `npm audit` reports 4 moderate advisories, all in `drizzle-kit`'s bundled
 `@esbuild-kit` (esbuild dev-server CORS issue, GHSA-67mh-4wv8-2f99). drizzle-kit
 is a dev-only CLI that does not run the affected dev server. Runtime
-dependencies report no known vulnerabilities.
+dependencies (including `stripe` 22.6.2, pinned) report no known vulnerabilities.
 
 ## Known gaps (not yet implemented)
 

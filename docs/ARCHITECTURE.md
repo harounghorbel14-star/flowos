@@ -116,7 +116,7 @@ service mutation ──(same tx)──► domain_events (outbox)
 - Actions execute as the workflow **owner with their current role**, through the
   same service functions as the API (so validation, permission checks, audit and
   notifications apply). Saving a workflow makes the saver its owner.
-- Actions are a fixed registry (`create_task`, `notify`) with plain-text
+- Actions are a fixed registry (`create_task`, `notify`, `send_message`) with plain-text
   `{{field}}` templates. No user-supplied code is executed.
 - Runs snapshot their actions at dispatch, so editing a workflow cannot change
   an in-flight run. Events produced ≥3 workflow hops deep are not dispatched.
@@ -188,6 +188,26 @@ no chart library, validated series tokens `--series-1/2` per theme.
   never prints query parameters. Postgres data exceptions (class 22) map to
   `BAD_REQUEST`; unique and FK violations to `CONFLICT`/`BAD_REQUEST`.
 - Dates are validated as real calendar dates (`lib/validation.ts`).
+
+## Billing
+
+`modules/billing`: `getEntitlements` derives the plan (self-hosted when Stripe
+is not configured; otherwise from `subscriptions`, Free unless active,
+trialing or past_due) and applies operator feature flags; `assertWithinLimit`
+and `assertFeature` are called by the services that create members,
+workflows, documents and assistant turns. Stripe access goes through a small
+`BillingGateway` interface (checkout, portal, customer, webhook
+verification). Webhooks: raw body → signature check → `handleStripeEvent`,
+which records the event id and applies its effect in one transaction.
+
+## Integrations
+
+`modules/integrations`: a catalog of providers (available or planned),
+encrypted connection secrets (`lib/crypto.ts`), and a `Transport` that posts
+JSON without following redirects. The workflow action `send_message`
+delivers through it, mapping 4xx to permanent and 429/5xx/network errors to
+retryable failures. OAuth providers have an interface
+(`providers.ts`) and no implementation.
 
 ## Rate limiting
 
