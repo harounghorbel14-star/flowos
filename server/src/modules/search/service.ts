@@ -1,11 +1,20 @@
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import type { Database } from "../../db/client";
-import { approvalRequests, departments, employees, organizations, projects, tasks } from "../../db/schema";
+import {
+  approvalRequests,
+  departments,
+  documents,
+  employees,
+  organizations,
+  projects,
+  tasks,
+} from "../../db/schema";
 import { can, type Actor } from "../../lib/actor";
 import { likePattern } from "../../lib/pagination";
+import { visibleTo as documentVisibleTo } from "../documents/service";
 
 export interface SearchHit {
-  kind: "employee" | "department" | "project" | "task" | "approval";
+  kind: "employee" | "department" | "project" | "task" | "approval" | "document";
   id: string;
   title: string;
   subtitle: string | null;
@@ -124,6 +133,36 @@ export async function globalSearch(
             title: r.title,
             subtitle: `${r.prefix}-${r.number} · ${r.status}`,
             link: `/tasks/${r.id}`,
+          })),
+        ),
+    );
+  }
+  if (can(actor, "document:read")) {
+    queries.push(
+      db
+        .select({
+          id: documents.id,
+          title: documents.title,
+          category: documents.category,
+          fileName: documents.fileName,
+        })
+        .from(documents)
+        .where(
+          and(
+            eq(documents.orgId, actor.orgId),
+            documentVisibleTo(actor),
+            or(ilike(documents.title, p), ilike(documents.fileName, p)),
+          ),
+        )
+        .orderBy(sql`(${documents.title} ilike ${prefix}) desc`, desc(documents.createdAt))
+        .limit(perKind)
+        .then((rows) =>
+          rows.map((r) => ({
+            kind: "document" as const,
+            id: r.id,
+            title: r.title,
+            subtitle: `${r.category} · ${r.fileName}`,
+            link: `/documents?q=${encodeURIComponent(r.title)}`,
           })),
         ),
     );

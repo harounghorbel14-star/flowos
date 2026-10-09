@@ -19,5 +19,15 @@ export default defineConfig({
     outDir: path.resolve(import.meta.dirname, "dist/client"),
     emptyOutDir: true,
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        // Long-lived vendor chunks cache across app deploys.
+        manualChunks: {
+          react: ["react", "react-dom", "react-router-dom"],
+          data: ["@tanstack/react-query", "@trpc/client", "@trpc/react-query", "superjson"],
+          icons: ["lucide-react"],
+        },
+      },
+    },
   },
 });

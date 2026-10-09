@@ -17,6 +17,7 @@ import {
 import { formatDateTime, formatDay, personName, timeAgo } from "../lib/format";
 import { useOrg } from "../lib/session";
 import { errorCode, trpc } from "../lib/trpc";
+import { DocumentTable, UploadButton } from "./Documents";
 import { NotFoundPage } from "./NotFound";
 
 export function EmployeeDetailPage() {
@@ -24,6 +25,7 @@ export function EmployeeDetailPage() {
   const { can } = useOrg();
   const [editing, setEditing] = useState(false);
   const employee = trpc.employees.get.useQuery({ id });
+  const docs = trpc.documents.list.useQuery({ employeeId: id, pageSize: 50 });
   const tasks = trpc.tasks.list.useQuery({
     assigneeEmployeeId: id,
     statuses: ["TODO", "IN_PROGRESS", "BLOCKED", "REVIEW"],
@@ -103,6 +105,18 @@ export function EmployeeDetailPage() {
                 ))}
               </ul>
             )}
+          </Panel>
+          <Panel
+            title="Documents"
+            action={can("document:upload") ? <UploadButton employeeId={e.id} /> : null}
+            flush
+          >
+            {docs.data && docs.data.total === 0 ? (
+              <EmptyState compact title="No documents">
+                Contracts, IDs and certificates about {e.firstName} that you can see appear here.
+              </EmptyState>
+            ) : null}
+            {docs.data && docs.data.total > 0 ? <DocumentTable docs={docs.data.items} /> : null}
           </Panel>
           <Panel title="Profile history">
             {e.history.length === 0 ? (

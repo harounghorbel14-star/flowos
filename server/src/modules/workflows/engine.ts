@@ -6,6 +6,7 @@ import { domainEvents, memberships, workflowRuns, workflowRunSteps, workflows } 
 import type { Actor } from "../../lib/actor";
 import { audit } from "../../lib/audit";
 import { AppError } from "../../lib/errors";
+import { notifyExpiringDocuments } from "../documents/service";
 import { notify } from "../notifications/service";
 import { describeError, executeAction, PermanentError } from "./actions";
 
@@ -218,11 +219,12 @@ export async function runDueWorkflows(db: Database, limit = 20, exec: typeof exe
   return results;
 }
 
-/** One full worker tick: dispatch new events, then run what is due. */
+/** One full worker tick: dispatch new events, run what is due, and send expiry reminders. */
 export async function runWorkerOnce(db: Database) {
   const dispatched = await dispatchEvents(db);
   const results = await runDueWorkflows(db);
-  return { dispatched, results };
+  const expiryReminders = await notifyExpiringDocuments(db);
+  return { dispatched, results, expiryReminders };
 }
 
 /** In-process background worker. Ticks never overlap. */

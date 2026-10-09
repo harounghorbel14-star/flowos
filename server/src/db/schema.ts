@@ -19,6 +19,8 @@ import {
   APPROVAL_EVENT_KINDS,
   APPROVAL_STATUSES,
   APPROVAL_TYPES,
+  DOCUMENT_CATEGORIES,
+  DOCUMENT_VISIBILITIES,
   EMPLOYEE_STATUSES,
   EMPLOYMENT_TYPES,
   NOTIFICATION_TYPES,
@@ -467,4 +469,44 @@ export const workflowRunSteps = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("workflow_run_steps_run_idx").on(t.orgId, t.runId, t.stepIndex)],
+);
+
+// ─── Documents ───────────────────────────────────────────────────────────────
+
+export const documentCategoryEnum = pgEnum("document_category", DOCUMENT_CATEGORIES);
+export const documentVisibilityEnum = pgEnum("document_visibility", DOCUMENT_VISIBILITIES);
+
+export const documents = pgTable(
+  "documents",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    description: text("description"),
+    category: documentCategoryEnum("category").notNull().default("OTHER"),
+    /** ORG: anyone with document:read. RESTRICTED: uploader, the employee it concerns, and document managers. */
+    visibility: documentVisibilityEnum("visibility").notNull().default("ORG"),
+    /** The employee this document concerns (contract, ID, certificate…). */
+    employeeId: uuid("employee_id"),
+    fileName: text("file_name").notNull(),
+    /** Detected from the file's bytes, never taken from the client. */
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    sha256: text("sha256").notNull(),
+    /** Random storage key; never derived from user input. */
+    storageKey: text("storage_key").notNull(),
+    expiresOn: date("expires_on"),
+    expiryNotifiedAt: timestamp("expiry_notified_at", { withTimezone: true }),
+    uploadedByUserId: uuid("uploaded_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("documents_storage_key").on(t.storageKey),
+    index("documents_org_idx").on(t.orgId, t.createdAt),
+    index("documents_org_expiry_idx").on(t.orgId, t.expiresOn),
+    index("documents_org_employee_idx").on(t.orgId, t.employeeId),
+  ],
 );

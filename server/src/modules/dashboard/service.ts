@@ -3,6 +3,7 @@ import type { Database } from "../../db/client";
 import { approvalRequests, auditEvents, employees, projects, tasks, users } from "../../db/schema";
 import { can, type Actor } from "../../lib/actor";
 import { addDaysISO, todayISO } from "../../lib/dates";
+import { expiringDocuments } from "../documents/service";
 import { myEmployee } from "../employees/service";
 import { projectStats, riskReasons } from "../projects/service";
 import { failureCount } from "../workflows/service";
@@ -210,6 +211,7 @@ export async function commandCenter(db: Database, actor: Actor) {
     .from(sql`(select 1) as one`);
 
   const workflowFailuresQ = can(actor, "workflow:read") ? failureCount(db, actor, 7) : Promise.resolve(0);
+  const documentsQ = expiringDocuments(db, actor);
 
   const [
     taskCounts,
@@ -223,6 +225,7 @@ export async function commandCenter(db: Database, actor: Actor) {
     activity,
     totals,
     workflowFailures,
+    expiring,
   ] = await Promise.all([
     taskCountsQ,
     completedThisWeekQ,
@@ -235,6 +238,7 @@ export async function commandCenter(db: Database, actor: Actor) {
     activityQ,
     totalsQ,
     workflowFailuresQ,
+    documentsQ,
   ]);
 
   const stats = await projectStats(
@@ -266,6 +270,7 @@ export async function commandCenter(db: Database, actor: Actor) {
     myOpenRequests: a.myOpenRequests,
     projectsAtRisk: projectsAtRisk.length,
     workflowFailures7d: workflowFailures,
+    documentsExpired: expiring.filter((d) => d.expiresOn! < today).length,
   };
 
   return {
@@ -281,6 +286,12 @@ export async function commandCenter(db: Database, actor: Actor) {
     projectsAtRisk,
     onLeaveToday: onLeave.map((l) => ({ id: l.id, name: l.name, endDate: String(l.payload.endDate ?? "") })),
     activity,
+    expiringDocuments: expiring.map((d) => ({
+      id: d.id,
+      title: d.title,
+      expiresOn: d.expiresOn!,
+      category: d.category,
+    })),
   };
 }
 
@@ -327,6 +338,13 @@ export function buildBriefing(m: Record<string, number>, hasProfile: boolean): B
       tone: "critical",
       text: `${plural(m.workflowFailures7d!, "workflow run")} failed in the last 7 days and did not finish.`,
       link: "/workflows",
+    });
+  }
+  if (m.documentsExpired! > 0) {
+    lines.push({
+      tone: "attention",
+      text: `${plural(m.documentsExpired!, "document")} past ${m.documentsExpired === 1 ? "its" : "their"} expiry date.`,
+      link: "/documents?expiring=1",
     });
   }
   if (m.unassignedTasks! > 0) {

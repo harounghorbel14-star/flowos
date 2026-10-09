@@ -33,6 +33,19 @@ export type ApprovalEventKind = (typeof APPROVAL_EVENT_KINDS)[number];
 export const LEAVE_TYPES = ["ANNUAL", "SICK", "PARENTAL", "UNPAID", "OTHER"] as const;
 export type LeaveType = (typeof LEAVE_TYPES)[number];
 
+export const DOCUMENT_CATEGORIES = [
+  "CONTRACT",
+  "POLICY",
+  "IDENTITY",
+  "CERTIFICATE",
+  "INVOICE",
+  "OTHER",
+] as const;
+export type DocumentCategory = (typeof DOCUMENT_CATEGORIES)[number];
+
+export const DOCUMENT_VISIBILITIES = ["ORG", "RESTRICTED"] as const;
+export type DocumentVisibility = (typeof DOCUMENT_VISIBILITIES)[number];
+
 export const NOTIFICATION_TYPES = [
   "TASK_ASSIGNED",
   "TASK_COMMENTED",
@@ -43,6 +56,7 @@ export const NOTIFICATION_TYPES = [
   "MEMBER_JOINED",
   "WORKFLOW_FAILED",
   "WORKFLOW_COMPLETED",
+  "DOCUMENT_EXPIRING",
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
@@ -86,6 +100,13 @@ export const LABELS: Record<string, string> = {
   PARENTAL: "Parental",
   UNPAID: "Unpaid",
   OTHER: "Other",
+  CONTRACT: "Contract",
+  POLICY: "Policy",
+  IDENTITY: "Identity",
+  CERTIFICATE: "Certificate",
+  INVOICE: "Invoice",
+  ORG: "Everyone in the organization",
+  RESTRICTED: "Restricted",
 };
 
 export function label(value: string | null | undefined): string {

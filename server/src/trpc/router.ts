@@ -3,6 +3,7 @@ import { auditRouter } from "../modules/audit/router";
 import { authRouter } from "../modules/auth/router";
 import { dashboardRouter } from "../modules/dashboard/router";
 import { departmentsRouter } from "../modules/departments/router";
+import { documentsRouter } from "../modules/documents/router";
 import { employeesRouter } from "../modules/employees/router";
 import { notificationsRouter } from "../modules/notifications/router";
 import { orgsRouter } from "../modules/orgs/router";
@@ -25,6 +26,7 @@ export const appRouter = router({
   dashboard: dashboardRouter,
   search: searchRouter,
   workflows: workflowsRouter,
+  documents: documentsRouter,
 });
 
 export type AppRouter = typeof appRouter;

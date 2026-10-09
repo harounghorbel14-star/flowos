@@ -2,6 +2,7 @@ import {
   Bell,
   Building2,
   CheckSquare,
+  FileText,
   FolderKanban,
   LayoutDashboard,
   Plus,
@@ -32,6 +33,7 @@ const KIND_ICON: Record<string, ReactNode> = {
   project: <FolderKanban aria-hidden />,
   task: <CheckSquare aria-hidden />,
   approval: <Stamp aria-hidden />,
+  document: <FileText aria-hidden />,
 };
 const KIND_GROUP: Record<string, string> = {
   employee: "People",
@@ -39,6 +41,7 @@ const KIND_GROUP: Record<string, string> = {
   project: "Projects",
   task: "Tasks",
   approval: "Approvals",
+  document: "Documents",
 };
 
 function useDebounced<T>(value: T, ms: number): T {

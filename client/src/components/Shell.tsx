@@ -2,6 +2,7 @@ import {
   Bell,
   Building2,
   CheckSquare,
+  FileText,
   FolderKanban,
   LayoutDashboard,
   LogOut,
@@ -163,6 +164,9 @@ export function Shell() {
         </NavLink>
         <NavLink to="/people/departments" className="nav">
           <Building2 aria-hidden /> Departments
+        </NavLink>
+        <NavLink to="/documents" className="nav">
+          <FileText aria-hidden /> Documents
         </NavLink>
         {can("org:update") || can("member:manage") || can("audit:read") ? (
           <NavLink to="/settings" className="nav">

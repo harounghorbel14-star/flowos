@@ -93,6 +93,24 @@ async function step(name, fn) {
     await a.screenshot({ path: `${SHOTS}/04-employee.png`, fullPage: true });
   });
 
+  await step("upload a restricted contract to Mia's profile", async () => {
+    await a.getByRole("button", { name: "Upload" }).click();
+    const dialog = a.getByRole("dialog");
+    await dialog.getByLabel("File").setInputFiles({
+      name: "employment-contract.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"),
+    });
+    await dialog.getByLabel("Title").fill("Employment contract");
+    await dialog.getByLabel("Category").selectOption("CONTRACT");
+    await dialog.getByLabel("Who can see it").selectOption("RESTRICTED");
+    await dialog.getByRole("button", { name: "Upload" }).click();
+    await a
+      .getByRole("cell", { name: /Employment contract/ })
+      .first()
+      .waitFor();
+  });
+
   await step("workflow runs in the background and creates onboarding tasks", async () => {
     await a.goto(workflowUrl);
     await a.getByText("Succeeded").waitFor({ timeout: 20000 });
@@ -178,6 +196,16 @@ async function step(name, fn) {
     await b.getByRole("link", { name: /Notifications/ }).click();
     // The assignment happened before she joined, so only later events notify her.
     await b.getByRole("heading", { name: "Notifications", exact: true }).waitFor();
+  });
+
+  await step("Mia can see and download her restricted contract", async () => {
+    await b.goto(`${BASE}/documents`);
+    await b.getByText("Employment contract").waitFor();
+    const href = await b.getByRole("link", { name: "Download Employment contract" }).getAttribute("href");
+    const res = await b.request.get(`${BASE}${href}`);
+    if (res.status() !== 200) throw new Error(`download status ${res.status()}`);
+    if (!(await res.body()).subarray(0, 5).equals(Buffer.from("%PDF-"))) throw new Error("wrong bytes");
+    if (!/attachment/.test(res.headers()["content-disposition"] ?? "")) throw new Error("not an attachment");
   });
 
   await step("Mia moves her task forward and comments", async () => {

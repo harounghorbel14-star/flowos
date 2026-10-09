@@ -16,6 +16,7 @@ let activeOrgId: string | null = null;
 export const setActiveOrgId = (id: string | null) => {
   activeOrgId = id;
 };
+export const getActiveOrgId = () => activeOrgId;
 
 export function createTrpcClient() {
   return trpc.createClient({

@@ -1,11 +1,10 @@
 import { initTRPC, TRPCError } from "@trpc/server";
-import { and, eq } from "drizzle-orm";
 import superjson from "superjson";
-import { z, ZodError } from "zod";
+import { ZodError } from "zod";
 import type { Permission } from "@shared/permissions";
-import { memberships } from "../db/schema";
 import { isProduction } from "../env";
-import { assertCan, type Actor } from "../lib/actor";
+import { assertCan } from "../lib/actor";
+import { loadActor } from "../lib/membership";
 import { toTRPCError } from "../lib/errors";
 import type { Context } from "./context";
 
@@ -47,28 +46,19 @@ export const authedProcedure = publicProcedure.use(({ ctx, next }) => {
   return next({ ctx: { ...ctx, auth: ctx.auth } });
 });
 
-const uuid = z.string().uuid();
-
 /**
  * Resolves the active organization from the `x-flowos-org` header and
  * verifies membership in the database on every request. The resulting
  * `actor` is the only tenant context services accept.
  */
 export const orgProcedure = authedProcedure.use(async ({ ctx, next }) => {
-  const orgId = ctx.requestedOrgId;
-  if (!orgId || !uuid.safeParse(orgId).success) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "No organization selected." });
-  }
-  const [membership] = await ctx.db
-    .select({ role: memberships.role })
-    .from(memberships)
-    .where(and(eq(memberships.orgId, orgId), eq(memberships.userId, ctx.auth.user.id)))
-    .limit(1);
-  if (!membership) {
+  const { actor, reason } = await loadActor(ctx.db, ctx.auth.user.id, ctx.requestedOrgId, ctx.ip);
+  if (!actor) {
+    if (reason === "NO_ORG")
+      throw new TRPCError({ code: "BAD_REQUEST", message: "No organization selected." });
     // Same response whether the org does not exist or the user is not a member.
     throw new TRPCError({ code: "FORBIDDEN", message: "You are not a member of this organization." });
   }
-  const actor: Actor = { userId: ctx.auth.user.id, orgId, role: membership.role, ip: ctx.ip };
   return next({ ctx: { ...ctx, actor } });
 });
 

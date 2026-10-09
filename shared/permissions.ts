@@ -24,12 +24,22 @@ export const PERMISSIONS = [
   "approval:read_all",
   "workflow:read",
   "workflow:manage",
+  "document:read",
+  "document:upload",
+  "document:manage",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
-const VIEWER: Permission[] = ["member:read", "employee:read", "project:read", "task:read"];
+const VIEWER: Permission[] = ["member:read", "employee:read", "project:read", "task:read", "document:read"];
 
-const MEMBER: Permission[] = [...VIEWER, "task:create", "task:write_own", "task:comment", "approval:create"];
+const MEMBER: Permission[] = [
+  ...VIEWER,
+  "task:create",
+  "task:write_own",
+  "task:comment",
+  "approval:create",
+  "document:upload",
+];
 
 const MANAGER: Permission[] = [
   ...MEMBER,
@@ -39,6 +49,7 @@ const MANAGER: Permission[] = [
   "task:write_any",
   "approval:decide",
   "workflow:read",
+  "document:manage",
 ];
 
 const ADMIN: Permission[] = [

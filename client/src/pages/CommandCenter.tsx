@@ -292,6 +292,34 @@ export function CommandCenterPage() {
                 )}
               </Panel>
 
+              {cc.data.expiringDocuments.length > 0 ? (
+                <Panel
+                  title="Documents needing attention"
+                  action={
+                    <Link to="/documents?expiring=1" className="btn ghost sm">
+                      All
+                    </Link>
+                  }
+                  flush
+                >
+                  <ul className="list">
+                    {cc.data.expiringDocuments.map((d) => {
+                      const expired = d.expiresOn < cc.data.today;
+                      return (
+                        <li key={d.id}>
+                          <Link to={`/documents?q=${encodeURIComponent(d.title)}`} className="list-item">
+                            <span className="grow truncate">{d.title}</span>
+                            <Badge tone={expired ? "critical" : "attention"}>
+                              {expired ? "Expired" : "Expires"} {formatDay(d.expiresOn)}
+                            </Badge>
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </Panel>
+              ) : null}
+
               {cc.data.onLeaveToday.length > 0 ? (
                 <Panel title="On approved leave today" flush>
                   <ul className="list">

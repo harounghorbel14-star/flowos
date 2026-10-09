@@ -8,6 +8,7 @@ import { ApprovalsPage } from "./pages/Approvals";
 import { AcceptInvitePage, LoginPage, SignupPage } from "./pages/Auth";
 import { CommandCenterPage } from "./pages/CommandCenter";
 import { DepartmentsPage } from "./pages/Departments";
+import { DocumentsPage } from "./pages/Documents";
 import { EmployeeDetailPage } from "./pages/EmployeeDetail";
 import { NotFoundPage } from "./pages/NotFound";
 import { NotificationsPage } from "./pages/Notifications";
@@ -84,6 +85,7 @@ function AuthedRoutes({ hasOrg }: { hasOrg: boolean }) {
         <Route path="people" element={<PeoplePage />} />
         <Route path="people/departments" element={<DepartmentsPage />} />
         <Route path="people/:id" element={<EmployeeDetailPage />} />
+        <Route path="documents" element={<DocumentsPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="approvals/:id" element={<ApprovalDetailPage />} />
         <Route path="workflows" element={<WorkflowsPage />} />
