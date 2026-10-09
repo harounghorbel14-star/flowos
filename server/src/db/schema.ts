@@ -660,3 +660,24 @@ export const rateLimits = pgTable(
   },
   (t) => [index("rate_limits_reset_idx").on(t.resetAt)],
 );
+
+/**
+ * Daily operational measurements per organization, recorded by the worker
+ * (hourly upsert; a day's row holds the last measurement of that UTC day).
+ * Lets Insights show measured history instead of reconstructing it.
+ */
+export const metricSnapshots = pgTable(
+  "metric_snapshots",
+  {
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    day: date("day").notNull(),
+    openTasks: integer("open_tasks").notNull(),
+    overdueTasks: integer("overdue_tasks").notNull(),
+    blockedTasks: integer("blocked_tasks").notNull(),
+    pendingApprovals: integer("pending_approvals").notNull(),
+    measuredAt: timestamp("measured_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.day] })],
+);

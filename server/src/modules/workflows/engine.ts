@@ -9,6 +9,7 @@ import { AppError } from "../../lib/errors";
 import { purgeExpiredRateLimits } from "../../auth/rateLimit";
 import { purgeExpiredSessions } from "../../auth/session";
 import { notifyExpiringDocuments } from "../documents/service";
+import { recordDailySnapshots } from "../insights/service";
 import { notify } from "../notifications/service";
 import { describeError, executeAction, PermanentError } from "./actions";
 import { logSafeError } from "../../lib/logging";
@@ -282,20 +283,30 @@ export async function runHousekeeping(db: Database) {
  * In-process background worker. Ticks never overlap. After a failed tick
  * (e.g. the database is down) the next ones are delayed exponentially, up to
  * a minute, so an outage does not flood the logs. Housekeeping runs about
- * once a minute. The returned function stops scheduling new ticks and
+ * once a minute; daily metric snapshots are refreshed hourly. The returned function stops scheduling new ticks and
  * resolves once the tick in progress (if any) has finished, so shutdown
  * never cuts a step's transaction short.
  */
-export function startWorker(db: Database, intervalMs = 2000, housekeepingMs = 60_000): () => Promise<void> {
+export function startWorker(
+  db: Database,
+  intervalMs = 2000,
+  housekeepingMs = 60_000,
+  snapshotMs = 60 * 60_000,
+): () => Promise<void> {
   let current: Promise<void> | null = null;
   let failures = 0;
   let nextTickAt = 0;
   let nextHousekeepingAt = 0;
+  let nextSnapshotAt = 0;
   const tick = async () => {
     await runWorkerOnce(db);
     if (Date.now() >= nextHousekeepingAt) {
       await runHousekeeping(db);
       nextHousekeepingAt = Date.now() + housekeepingMs;
+    }
+    if (Date.now() >= nextSnapshotAt) {
+      await recordDailySnapshots(db);
+      nextSnapshotAt = Date.now() + snapshotMs;
     }
   };
   const timer = setInterval(() => {

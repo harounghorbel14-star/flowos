@@ -44,6 +44,7 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.18.4",
+    "stripe": "22.6.2",
     "superjson": "^2.2.6",
     "zod": "^3.25.76"
   },
