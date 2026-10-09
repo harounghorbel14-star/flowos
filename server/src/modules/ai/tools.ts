@@ -12,6 +12,30 @@ import { listProjects } from "../projects/service";
 import { createTask, getTask, listTasks, updateTask } from "../tasks/service";
 import type { AiTool } from "./provider";
 import { isoDate } from "../../lib/validation";
+import { and, eq } from "drizzle-orm";
+import { employees, projects, tasks } from "../../db/schema";
+import { notFound } from "../../lib/errors";
+
+/** Name of an employee in the actor's organization, for confirmation cards. */
+async function employeeName(db: Database, actor: Actor, id: string) {
+  const [e] = await db
+    .select({ firstName: employees.firstName, lastName: employees.lastName })
+    .from(employees)
+    .where(and(eq(employees.orgId, actor.orgId), eq(employees.id, id)));
+  if (!e) throw notFound("Assignee");
+  return person(e.firstName, e.lastName) ?? "unnamed employee";
+}
+
+async function projectName(db: Database, actor: Actor, id: string) {
+  const [p] = await db
+    .select({ name: projects.name })
+    .from(projects)
+    .where(and(eq(projects.orgId, actor.orgId), eq(projects.id, id)));
+  if (!p) throw notFound("Project");
+  return p.name;
+}
+
+const clip = (t: string, n = 80) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
 
 const uuid = z.string().uuid();
 
@@ -33,8 +57,13 @@ export interface ToolDef<S extends z.ZodTypeAny = z.ZodTypeAny> {
   confirmation: "never" | "always";
   /** Audit action recorded when a confirmed write executes. */
   auditAction?: string;
-  /** Human-readable description of exactly what a write will do (shown on the confirmation card). */
-  describe?: (input: z.infer<S>) => string;
+  /**
+   * Human-readable description of exactly what a write will do, shown on the
+   * confirmation card. Resolves referenced records to their names so the user
+   * sees which task, person and project are affected; throws NOT_FOUND for a
+   * reference outside the actor's organization.
+   */
+  describe?: (db: Database, actor: Actor, input: z.infer<S>) => Promise<string>;
   execute: (db: Tx, actor: Actor, input: z.infer<S>) => Promise<unknown>;
 }
 
@@ -381,10 +410,19 @@ export const TOOLS: readonly ToolDef[] = [
     risk: "write",
     confirmation: "always",
     auditAction: "ai.task_created",
-    describe: (i) =>
-      `Create task “${i.title}” · ${label(i.priority)} priority${i.dueDate ? ` · due ${i.dueDate}` : ""}${
-        i.assigneeEmployeeId ? " · assigned" : " · unassigned"
-      }`,
+    describe: async (db, actor, i) =>
+      [
+        `Create task “${clip(i.title)}”`,
+        `${label(i.priority)} priority`,
+        i.dueDate ? `due ${i.dueDate}` : "no due date",
+        i.assigneeEmployeeId
+          ? `assigned to ${await employeeName(db, actor, i.assigneeEmployeeId)}`
+          : "unassigned",
+        i.projectId ? `in project ${await projectName(db, actor, i.projectId)}` : null,
+        i.description ? `description: “${clip(i.description)}”` : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
     execute: async (db, actor, input) => {
       const t = await createTask(db, actor, {
         title: input.title,
@@ -413,7 +451,14 @@ export const TOOLS: readonly ToolDef[] = [
     risk: "write",
     confirmation: "always",
     auditAction: "ai.task_status_changed",
-    describe: (i) => `Move task to “${label(i.status)}”`,
+    describe: async (db, actor, i) => {
+      const [t] = await db
+        .select({ number: tasks.number, title: tasks.title, status: tasks.status })
+        .from(tasks)
+        .where(and(eq(tasks.orgId, actor.orgId), eq(tasks.id, i.taskId)));
+      if (!t) throw notFound("Task");
+      return `Move task #${t.number} “${clip(t.title)}” from “${label(t.status)}” to “${label(i.status)}”`;
+    },
     execute: async (db, actor, input) => {
       const t = await updateTask(db, actor, input.taskId, { status: input.status });
       return { taskId: t.id, title: t.title, status: t.status };

@@ -324,10 +324,16 @@ async function takeActionUpdates(db: Database, actor: Actor, conversationId: str
 
 // ─── The turn loop ───────────────────────────────────────────────────────────
 
-async function lockConversation(db: Database, conversationId: string) {
+/**
+ * One turn at a time per conversation. The lock's expiry timestamp doubles as
+ * its token: renewals and the release only apply while it is still ours, so a
+ * slow turn whose lock lapsed can never release (or overwrite) a newer turn's.
+ */
+async function lockConversation(db: Database, conversationId: string): Promise<Date> {
+  const token = new Date(Date.now() + TURN_LOCK_MS);
   const [locked] = await db
     .update(aiConversations)
-    .set({ lockedUntil: new Date(Date.now() + TURN_LOCK_MS), updatedAt: new Date() })
+    .set({ lockedUntil: token, updatedAt: new Date() })
     .where(
       and(
         eq(aiConversations.id, conversationId),
@@ -336,6 +342,20 @@ async function lockConversation(db: Database, conversationId: string) {
     )
     .returning({ id: aiConversations.id });
   if (!locked) throw conflict("The assistant is still answering in this conversation.");
+  return token;
+}
+
+/** Extend our lock before each model request; fails if another turn took over. */
+async function renewLock(db: Database, conversationId: string, token: Date): Promise<Date> {
+  const next = new Date(Math.max(Date.now() + TURN_LOCK_MS, token.getTime() + 1));
+  const [renewed] = await db
+    .update(aiConversations)
+    .set({ lockedUntil: next })
+    .where(and(eq(aiConversations.id, conversationId), eq(aiConversations.lockedUntil, token)))
+    .returning({ id: aiConversations.id });
+  if (!renewed)
+    throw conflict("This conversation was continued elsewhere. Reload to see the latest messages.");
+  return next;
 }
 
 function truncate(json: string) {
@@ -387,7 +407,17 @@ async function runTool(
 
   if (tool.confirmation === "always") {
     const inputHash = hashInput(tool.name, parsed.data);
-    const summary = tool.describe ? tool.describe(parsed.data) : tool.name;
+    let summary = tool.name;
+    if (tool.describe) {
+      try {
+        summary = await tool.describe(db, actor, parsed.data);
+      } catch (err) {
+        if (!(err instanceof AppError)) throw err;
+        // e.g. the task or assignee does not exist in this organization: nothing is prepared.
+        await log("INVALID", err.message);
+        return result(err.message, true);
+      }
+    }
     const [action] = await db
       .insert(aiActions)
       .values({
@@ -447,12 +477,14 @@ export async function runTurn(
   userText: string,
   emit: (e: TurnEvent) => void,
   provider: AiProvider | null = getAiProvider(),
+  /** Aborted when the client disconnects: stop spending tokens on an answer nobody reads. */
+  signal?: AbortSignal,
 ) {
   assertCan(actor, "ai:use");
   if (!provider) throw new AppError("BAD_REQUEST", "The AI assistant is not configured on this server.");
   await aiLimiter.consume(`user:${actor.userId}`, db);
   const conversation = await ownConversation(db, actor, conversationId);
-  await lockConversation(db, conversationId);
+  let lock = await lockConversation(db, conversationId);
   try {
     const [org] = await db
       .select({ name: organizations.name })
@@ -483,6 +515,8 @@ export async function runTurn(
     let parseRetries = 0;
 
     for (let i = 0; i < MAX_MODEL_REQUESTS_PER_TURN; i++) {
+      if (signal?.aborted) return;
+      lock = await renewLock(db, conversationId, lock);
       const history = await db
         .select({ role: aiMessages.role, content: aiMessages.content })
         .from(aiMessages)
@@ -493,8 +527,10 @@ export async function runTurn(
       const started = Date.now();
       let response: AiMessage;
       try {
-        response = await provider.run({ system: SYSTEM_PROMPT, messages, tools: apiTools }, (delta) =>
-          emit({ type: "text", delta }),
+        response = await provider.run(
+          { system: SYSTEM_PROMPT, messages, tools: apiTools },
+          (delta) => emit({ type: "text", delta }),
+          signal,
         );
         parseRetries = 0;
       } catch (err) {
@@ -513,6 +549,7 @@ export async function runTurn(
           error: message,
         });
         if (err instanceof ToolInputParseError && parseRetries++ < 2) continue;
+        if (signal?.aborted) return; // the client left; nothing to report
         console.error("[ai] provider error:", logSafeError(err));
         emit({ type: "error", message: "The assistant could not respond. Please try again." });
         return;
@@ -581,7 +618,7 @@ export async function runTurn(
     await db
       .update(aiConversations)
       .set({ lockedUntil: null, updatedAt: new Date() })
-      .where(eq(aiConversations.id, conversationId));
+      .where(and(eq(aiConversations.id, conversationId), eq(aiConversations.lockedUntil, lock)));
   }
 }
 

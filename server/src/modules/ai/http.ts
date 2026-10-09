@@ -48,8 +48,12 @@ export function aiHttpRouter(csrfGuard: (req: Request, res: Response, next: Next
         }
         res.write(`${JSON.stringify(event)}\n`);
       };
+      const abort = new AbortController();
+      res.on("close", () => {
+        if (!res.writableEnded) abort.abort();
+      });
       try {
-        await runTurn(db, actor, id, parsed.data.text, emit);
+        await runTurn(db, actor, id, parsed.data.text, emit, undefined, abort.signal);
       } catch (err) {
         if (!started) throw err;
         emit({ type: "error", message: err instanceof AppError ? err.message : "The assistant failed." });
