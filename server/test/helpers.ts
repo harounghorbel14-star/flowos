@@ -45,7 +45,7 @@ export function callerFor(user: TestUser, orgId?: string) {
 }
 
 export async function createUser(name = "Test User"): Promise<TestUser> {
-  signupLimiter.reset();
+  await signupLimiter.reset();
   const email = `u-${randomUUID()}@example.test`;
   const { user } = await anonCaller({ ip: randomUUID() }).auth.signup({
     email,
@@ -75,7 +75,7 @@ export async function addMember(
   return user;
 }
 
-export function resetLimiters() {
-  loginLimiter.reset();
-  signupLimiter.reset();
+export async function resetLimiters() {
+  await loginLimiter.reset();
+  await signupLimiter.reset();
 }

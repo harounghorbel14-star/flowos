@@ -150,7 +150,7 @@ test double that calls the real tools against the real database).
 | Prepared actions + confirmation                                                                                                           | IMPLEMENTED AND VERIFIED         | hash-bound, user/org-bound, 10-min expiry, single-use, re-authorized at confirm time; chat text cannot confirm |
 | Tool execution history, usage (tokens, cache reads, latency, stop reason, errors)                                                         | IMPLEMENTED AND VERIFIED         | `ai_tool_calls`, `ai_usage`                                                                                    |
 | Refusal handling                                                                                                                          | IMPLEMENTED AND VERIFIED (logic) | partial output discarded, never stored or acted on                                                             |
-| Rate limiting                                                                                                                             | IMPLEMENTED AND VERIFIED         | 20 turns/min per user (in-memory); one turn at a time per conversation                                         |
+| Rate limiting                                                                                                                             | IMPLEMENTED AND VERIFIED         | 20 turns/min per user (shared, Postgres-backed); one turn at a time per conversation                           |
 
 Tools — read: operational snapshot, search people, get person, list tasks,
 get task, list projects, my approvals, search document metadata. Write

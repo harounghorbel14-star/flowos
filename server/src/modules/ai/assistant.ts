@@ -29,7 +29,7 @@ const ACTION_TTL_MS = 10 * 60 * 1000;
 const TOOL_RESULT_LIMIT = 20_000;
 const TURN_LOCK_MS = 3 * 60 * 1000;
 
-export const aiLimiter = new RateLimiter(20, 60_000);
+export const aiLimiter = new RateLimiter("ai", 20, 60_000);
 
 /**
  * Stable system prompt. Nothing per-request (dates, names, IDs) goes here, so
@@ -449,7 +449,7 @@ export async function runTurn(
 ) {
   assertCan(actor, "ai:use");
   if (!provider) throw new AppError("BAD_REQUEST", "The AI assistant is not configured on this server.");
-  aiLimiter.consume(`user:${actor.userId}`);
+  await aiLimiter.consume(`user:${actor.userId}`, db);
   const conversation = await ownConversation(db, actor, conversationId);
   await lockConversation(db, conversationId);
   try {

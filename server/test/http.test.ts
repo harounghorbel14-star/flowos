@@ -14,7 +14,7 @@ beforeAll(async () => {
   server = createApp().listen(0);
   await new Promise((r) => server.once("listening", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  resetLimiters();
+  await resetLimiters();
 });
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 

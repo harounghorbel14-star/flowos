@@ -49,8 +49,8 @@ async function trpc(path: string, input: unknown, headers: Record<string, string
 
 describe("AI streaming endpoint", () => {
   it("streams NDJSON events for an authenticated member and enforces CSRF", async () => {
-    resetLimiters();
-    aiLimiter.reset();
+    await resetLimiters();
+    await aiLimiter.reset();
     setAiProvider(echo);
     const signup = await trpc(
       "auth.signup",
