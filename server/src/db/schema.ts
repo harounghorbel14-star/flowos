@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   bigserial,
+  boolean,
   date,
   index,
   integer,
@@ -25,6 +27,7 @@ import {
   TASK_PRIORITIES,
   TASK_STATUSES,
 } from "@shared/domain";
+import type { Condition, TriggerType, WorkflowAction } from "@shared/workflows";
 
 /*
  * Tenancy rule: every tenant-owned table carries `org_id`. Repositories must
@@ -364,4 +367,104 @@ export const notifications = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("notifications_user_idx").on(t.orgId, t.userId, t.readAt, t.createdAt)],
+);
+
+// ─── Workflows ───────────────────────────────────────────────────────────────
+
+export const WORKFLOW_RUN_STATUSES = ["PENDING", "RUNNING", "SUCCEEDED", "FAILED"] as const;
+export const workflowRunStatusEnum = pgEnum("workflow_run_status", WORKFLOW_RUN_STATUSES);
+export const workflowStepStatusEnum = pgEnum("workflow_step_status", ["SUCCEEDED", "FAILED"]);
+
+/**
+ * Transactional outbox. Services insert a row in the same transaction as the
+ * change it describes, so an event exists if and only if the change committed.
+ */
+export const domainEvents = pgTable(
+  "domain_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    entityId: text("entity_id"),
+    actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    /** How many workflow hops produced this event; deep chains are not dispatched. */
+    depth: integer("depth").notNull().default(0),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("domain_events_pending_idx").on(t.dispatchedAt, t.id)],
+);
+
+export const workflows = pgTable(
+  "workflows",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    enabled: boolean("enabled").notNull().default(true),
+    trigger: text("trigger").$type<TriggerType>().notNull(),
+    conditions: jsonb("conditions").$type<Condition[]>().notNull().default([]),
+    actions: jsonb("actions").$type<WorkflowAction[]>().notNull(),
+    /** Actions run with this member's current permissions. */
+    ownerUserId: uuid("owner_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("workflows_org_id_key").on(t.orgId, t.id),
+    index("workflows_org_trigger_idx").on(t.orgId, t.trigger, t.enabled),
+  ],
+);
+
+export const workflowRuns = pgTable(
+  "workflow_runs",
+  {
+    id: id(),
+    orgId: uuid("org_id").notNull(),
+    workflowId: uuid("workflow_id").notNull(),
+    eventId: bigint("event_id", { mode: "number" })
+      .notNull()
+      .references(() => domainEvents.id, { onDelete: "cascade" }),
+    status: workflowRunStatusEnum("status").notNull().default("PENDING"),
+    /** Snapshot taken at dispatch so later edits cannot change an in-flight run. */
+    actions: jsonb("actions").$type<WorkflowAction[]>().notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // Idempotency: an event can start a given workflow at most once.
+    uniqueIndex("workflow_runs_once_key").on(t.workflowId, t.eventId),
+    uniqueIndex("workflow_runs_org_id_key").on(t.orgId, t.id),
+    index("workflow_runs_due_idx").on(t.status, t.nextAttemptAt),
+    index("workflow_runs_workflow_idx").on(t.orgId, t.workflowId, t.createdAt),
+  ],
+);
+
+export const workflowRunSteps = pgTable(
+  "workflow_run_steps",
+  {
+    id: id(),
+    orgId: uuid("org_id").notNull(),
+    runId: uuid("run_id").notNull(),
+    stepIndex: integer("step_index").notNull(),
+    actionType: text("action_type").notNull(),
+    status: workflowStepStatusEnum("status").notNull(),
+    attempt: integer("attempt").notNull(),
+    output: jsonb("output").$type<Record<string, unknown>>(),
+    error: text("error"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("workflow_run_steps_run_idx").on(t.orgId, t.runId, t.stepIndex)],
 );

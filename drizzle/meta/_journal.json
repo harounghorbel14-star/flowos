@@ -15,6 +15,20 @@
       "when": 1791540202814,
       "tag": "0001_tenant_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791542283103,
+      "tag": "0002_workflows",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791542284010,
+      "tag": "0003_workflow_integrity",
+      "breakpoints": true
     }
   ]
 }

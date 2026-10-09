@@ -8,6 +8,7 @@ import { audit, diff } from "../../lib/audit";
 import { badRequest, conflict, notFound } from "../../lib/errors";
 import { likePattern, offsetOf, toPage, type PageInput } from "../../lib/pagination";
 import { fullName, requireDepartment, requireEmployee, requireMember } from "../../lib/refs";
+import { emit } from "../../lib/events";
 import { entityHistory } from "../audit/service";
 
 export interface EmployeeInput {
@@ -212,7 +213,7 @@ async function assertEmailFree(tx: Tx, orgId: string, email: string, exceptId?: 
   if (row && row.id !== exceptId) throw conflict("An employee with that email already exists.");
 }
 
-export async function createEmployee(db: Database, actor: Actor, input: EmployeeInput) {
+export async function createEmployee(db: Tx, actor: Actor, input: EmployeeInput) {
   assertCan(actor, "employee:write");
   return db.transaction(async (tx) => {
     await assertEmailFree(tx, actor.orgId, input.email);
@@ -226,6 +227,22 @@ export async function createEmployee(db: Database, actor: Actor, input: Employee
       entityType: "employee",
       entityId: created!.id,
       summary: `Added ${fullName(created!)} to the directory`,
+    });
+    const dept = created!.departmentId
+      ? await requireDepartment(tx, actor.orgId, created!.departmentId)
+      : null;
+    await emit(tx, actor, "employee.created", created!.id, {
+      employeeId: created!.id,
+      firstName: created!.firstName,
+      lastName: created!.lastName,
+      email: created!.email,
+      jobTitle: created!.jobTitle,
+      status: created!.status,
+      employmentType: created!.employmentType,
+      departmentName: dept?.name ?? null,
+      startDate: created!.startDate,
+      subjectEmployeeId: created!.id,
+      subjectUserId: created!.userId,
     });
     return created!;
   });

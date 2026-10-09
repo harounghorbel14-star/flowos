@@ -8,6 +8,7 @@ import { todayISO } from "../../lib/dates";
 import { badRequest, forbidden, notFound } from "../../lib/errors";
 import { likePattern, offsetOf, toPage, type PageInput } from "../../lib/pagination";
 import { fullName, requireEmployee, requireProject } from "../../lib/refs";
+import { emit } from "../../lib/events";
 import { entityHistory } from "../audit/service";
 import { myEmployee } from "../employees/service";
 import { notify } from "../notifications/service";
@@ -214,7 +215,7 @@ async function notifyAssignee(
   });
 }
 
-export async function createTask(db: Database, actor: Actor, input: TaskInput) {
+export async function createTask(db: Tx, actor: Actor, input: TaskInput) {
   assertCan(actor, "task:create");
   return db.transaction(async (tx) => {
     const { assignee } = await validateRefs(tx, actor, input);
@@ -292,6 +293,27 @@ export async function updateTask(db: Database, actor: Actor, id: string, input: 
       metadata: changes,
     });
     if (reassigned) await notifyAssignee(tx, actor, assignee, after!);
+    if (statusChanged) {
+      const [ctx] = await tx
+        .select({ projectName: projects.name, assigneeUserId: employees.userId })
+        .from(tasks)
+        .leftJoin(projects, and(eq(projects.orgId, tasks.orgId), eq(projects.id, tasks.projectId)))
+        .leftJoin(
+          employees,
+          and(eq(employees.orgId, tasks.orgId), eq(employees.id, tasks.assigneeEmployeeId)),
+        )
+        .where(and(eq(tasks.orgId, actor.orgId), eq(tasks.id, id)));
+      await emit(tx, actor, "task.status_changed", id, {
+        taskId: id,
+        title: after!.title,
+        from: before.status,
+        to: after!.status,
+        priority: after!.priority,
+        projectName: ctx?.projectName ?? null,
+        subjectEmployeeId: after!.assigneeEmployeeId,
+        subjectUserId: ctx?.assigneeUserId ?? null,
+      });
+    }
     for (const projectId of new Set([before.projectId, after!.projectId])) {
       if (projectId) await touchProject(tx, actor.orgId, projectId);
     }

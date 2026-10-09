@@ -9,6 +9,7 @@ import { orgsRouter } from "../modules/orgs/router";
 import { projectsRouter } from "../modules/projects/router";
 import { searchRouter } from "../modules/search/router";
 import { tasksRouter } from "../modules/tasks/router";
+import { workflowsRouter } from "../modules/workflows/router";
 import { createCallerFactory, router } from "./trpc";
 
 export const appRouter = router({
@@ -23,6 +24,7 @@ export const appRouter = router({
   notifications: notificationsRouter,
   dashboard: dashboardRouter,
   search: searchRouter,
+  workflows: workflowsRouter,
 });
 
 export type AppRouter = typeof appRouter;

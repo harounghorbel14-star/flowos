@@ -67,6 +67,16 @@ async function step(name, fn) {
     await a.getByRole("link", { name: "Delivery" }).waitFor();
   });
 
+  let workflowUrl = "";
+  await step("create the onboarding workflow from the template", async () => {
+    await a.goto(`${BASE}/workflows`);
+    await a.getByRole("button", { name: "Onboarding template" }).click();
+    await a.getByRole("dialog").getByRole("button", { name: "Create workflow" }).click();
+    await a.waitForURL(/\/workflows\/[0-9a-f-]{36}$/);
+    await a.getByText("No runs yet").waitFor();
+    workflowUrl = a.url();
+  });
+
   await step("add an employee with department and manager", async () => {
     await a.goto(`${BASE}/people`);
     await a.getByRole("button", { name: "Add employee" }).click();
@@ -81,6 +91,15 @@ async function step(name, fn) {
     await a.waitForURL(/\/people\/[0-9a-f-]{36}$/);
     await a.getByRole("heading", { name: /Mia Member/ }).waitFor();
     await a.screenshot({ path: `${SHOTS}/04-employee.png`, fullPage: true });
+  });
+
+  await step("workflow runs in the background and creates onboarding tasks", async () => {
+    await a.goto(workflowUrl);
+    await a.getByText("Succeeded").waitFor({ timeout: 20000 });
+    await a.screenshot({ path: `${SHOTS}/04b-workflow-run.png`, fullPage: true });
+    await a.goto(`${BASE}/tasks?q=Mia`);
+    await a.getByRole("link", { name: "Prepare equipment and accounts for Mia Member" }).waitFor();
+    await a.getByRole("link", { name: "Welcome meeting with Mia" }).waitFor();
   });
 
   await step("invite Mia and capture the single-use link", async () => {

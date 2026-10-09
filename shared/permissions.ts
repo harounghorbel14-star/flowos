@@ -22,6 +22,8 @@ export const PERMISSIONS = [
   "approval:create",
   "approval:decide",
   "approval:read_all",
+  "workflow:read",
+  "workflow:manage",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -36,9 +38,17 @@ const MANAGER: Permission[] = [
   "project:write",
   "task:write_any",
   "approval:decide",
+  "workflow:read",
 ];
 
-const ADMIN: Permission[] = [...MANAGER, "org:update", "member:manage", "audit:read", "approval:read_all"];
+const ADMIN: Permission[] = [
+  ...MANAGER,
+  "org:update",
+  "member:manage",
+  "audit:read",
+  "approval:read_all",
+  "workflow:manage",
+];
 
 export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
   OWNER: new Set(PERMISSIONS),

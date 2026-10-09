@@ -5,6 +5,7 @@ import { can, type Actor } from "../../lib/actor";
 import { addDaysISO, todayISO } from "../../lib/dates";
 import { myEmployee } from "../employees/service";
 import { projectStats, riskReasons } from "../projects/service";
+import { failureCount } from "../workflows/service";
 
 /** Entity types whose activity every member may see. Others require audit:read. */
 const SHARED_ACTIVITY = ["task", "project", "employee", "department"];
@@ -208,6 +209,8 @@ export async function commandCenter(db: Database, actor: Actor) {
     })
     .from(sql`(select 1) as one`);
 
+  const workflowFailuresQ = can(actor, "workflow:read") ? failureCount(db, actor, 7) : Promise.resolve(0);
+
   const [
     taskCounts,
     completedThisWeek,
@@ -219,6 +222,7 @@ export async function commandCenter(db: Database, actor: Actor) {
     onLeave,
     activity,
     totals,
+    workflowFailures,
   ] = await Promise.all([
     taskCountsQ,
     completedThisWeekQ,
@@ -230,6 +234,7 @@ export async function commandCenter(db: Database, actor: Actor) {
     onLeaveQ,
     activityQ,
     totalsQ,
+    workflowFailuresQ,
   ]);
 
   const stats = await projectStats(
@@ -260,6 +265,7 @@ export async function commandCenter(db: Database, actor: Actor) {
     approvalsAwaitingMe: a.awaitingMe,
     myOpenRequests: a.myOpenRequests,
     projectsAtRisk: projectsAtRisk.length,
+    workflowFailures7d: workflowFailures,
   };
 
   return {
@@ -314,6 +320,13 @@ export function buildBriefing(m: Record<string, number>, hasProfile: boolean): B
       tone: "attention",
       text: `${plural(m.projectsAtRisk!, "project")} flagged at risk.`,
       link: "/projects",
+    });
+  }
+  if (m.workflowFailures7d! > 0) {
+    lines.push({
+      tone: "critical",
+      text: `${plural(m.workflowFailures7d!, "workflow run")} failed in the last 7 days and did not finish.`,
+      link: "/workflows",
     });
   }
   if (m.unassignedTasks! > 0) {

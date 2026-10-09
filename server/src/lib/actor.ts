@@ -12,6 +12,8 @@ export interface Actor {
   orgId: string;
   role: Role;
   ip: string | null;
+  /** Set when acting on behalf of a workflow: how many workflow hops deep we are. */
+  workflowDepth?: number;
 }
 
 export function can(actor: Actor, permission: Permission): boolean {

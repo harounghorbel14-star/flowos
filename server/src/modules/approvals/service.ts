@@ -4,11 +4,12 @@ import { z } from "zod";
 import { LEAVE_TYPES, type ApprovalStatus, type ApprovalType, type Role } from "@shared/domain";
 import { ROLE_PERMISSIONS } from "@shared/permissions";
 import type { Database, Tx } from "../../db/client";
-import { approvalEvents, approvalRequests, memberships, users } from "../../db/schema";
+import { approvalEvents, approvalRequests, employees, memberships, users } from "../../db/schema";
 import { assertCan, can, type Actor } from "../../lib/actor";
 import { audit } from "../../lib/audit";
 import { badRequest, conflict, forbidden, notFound } from "../../lib/errors";
 import { offsetOf, toPage, type PageInput } from "../../lib/pagination";
+import { emit } from "../../lib/events";
 import { notify } from "../notifications/service";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -277,6 +278,20 @@ export async function decide(
       title: `Your request “${updated.title}” was ${input.decision.toLowerCase()}`,
       body: input.comment?.trim() || null,
       link: `/approvals/${input.id}`,
+    });
+    const [requesterInfo] = await tx
+      .select({ name: users.name, employeeId: employees.id })
+      .from(users)
+      .leftJoin(employees, and(eq(employees.orgId, actor.orgId), eq(employees.userId, users.id)))
+      .where(eq(users.id, updated.requesterUserId));
+    await emit(tx, actor, "approval.decided", input.id, {
+      approvalId: input.id,
+      title: updated.title,
+      type: updated.type,
+      decision: input.decision,
+      requesterName: requesterInfo?.name ?? null,
+      subjectEmployeeId: requesterInfo?.employeeId ?? null,
+      subjectUserId: updated.requesterUserId,
     });
     return updated;
   });

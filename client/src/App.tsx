@@ -18,6 +18,7 @@ import { ProjectsPage } from "./pages/Projects";
 import { AuditPage, MembersPage, OrgSettingsPage } from "./pages/Settings";
 import { TaskDetailPage } from "./pages/TaskDetail";
 import { TasksPage } from "./pages/Tasks";
+import { WorkflowDetailPage, WorkflowsPage } from "./pages/Workflows";
 
 function FullPageLoading() {
   return (
@@ -85,6 +86,8 @@ function AuthedRoutes({ hasOrg }: { hasOrg: boolean }) {
         <Route path="people/:id" element={<EmployeeDetailPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="approvals/:id" element={<ApprovalDetailPage />} />
+        <Route path="workflows" element={<WorkflowsPage />} />
+        <Route path="workflows/:id" element={<WorkflowDetailPage />} />
         <Route path="notifications" element={<NotificationsPage />} />
         <Route path="settings" element={<OrgSettingsPage />} />
         <Route path="settings/members" element={<MembersPage />} />

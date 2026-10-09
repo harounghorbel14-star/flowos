@@ -10,6 +10,7 @@ import {
   Stamp,
   User,
   Users,
+  Workflow,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
@@ -103,6 +104,17 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose(): vo
         to: "/approvals",
       },
       { id: "nav-people", group: "Go to", title: "People", icon: <Users aria-hidden />, to: "/people" },
+      ...(can("workflow:read")
+        ? [
+            {
+              id: "nav-workflows",
+              group: "Go to",
+              title: "Workflows",
+              icon: <Workflow aria-hidden />,
+              to: "/workflows",
+            },
+          ]
+        : []),
       {
         id: "nav-notes",
         group: "Go to",

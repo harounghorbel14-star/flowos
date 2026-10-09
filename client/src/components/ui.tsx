@@ -330,7 +330,7 @@ export function Pagination({
   return (
     <nav className="pagination" aria-label="Pagination">
       <span className="num">
-        {total} {noun} · page {page} of {pageCount}
+        {total} {total === 1 ? noun.replace(/s$/, "") : noun} · page {page} of {pageCount}
       </span>
       <span className="row">
         <Button

@@ -12,6 +12,7 @@ import {
   Stamp,
   Sun,
   Users,
+  Workflow,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -149,6 +150,12 @@ export function Shell() {
             </span>
           ) : null}
         </NavLink>
+
+        {can("workflow:read") ? (
+          <NavLink to="/workflows" className="nav">
+            <Workflow aria-hidden /> Workflows
+          </NavLink>
+        ) : null}
 
         <div className="rail-section">Organization</div>
         <NavLink to="/people" end className="nav">
