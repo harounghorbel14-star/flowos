@@ -24,9 +24,12 @@
     "db:migrate": "tsx --env-file-if-exists=.env server/src/db/migrate.ts",
     "db:seed": "tsx --env-file-if-exists=.env server/src/db/seed.ts",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build",
-    "test:e2e": "node e2e/smoke.mjs"
+    "test:e2e": "node e2e/smoke.mjs",
+    "e2e:ai-harness": "npm run build:client && NODE_ENV=production APP_ORIGIN=http://localhost:3200 tsx --env-file-if-exists=.env e2e/ai-harness.ts",
+    "test:e2e:assistant": "E2E_BASE_URL=http://localhost:3200 node e2e/assistant.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.132.1",
     "@tanstack/react-query": "^5.104.1",
     "@trpc/client": "^11.19.0",
     "@trpc/react-query": "^11.19.0",

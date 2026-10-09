@@ -27,10 +27,18 @@ export const PERMISSIONS = [
   "document:read",
   "document:upload",
   "document:manage",
+  "ai:use",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
-const VIEWER: Permission[] = ["member:read", "employee:read", "project:read", "task:read", "document:read"];
+const VIEWER: Permission[] = [
+  "member:read",
+  "employee:read",
+  "project:read",
+  "task:read",
+  "document:read",
+  "ai:use",
+];
 
 const MEMBER: Permission[] = [
   ...VIEWER,

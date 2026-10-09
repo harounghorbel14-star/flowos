@@ -8,6 +8,7 @@ import {
   Plus,
   Search,
   Settings,
+  Sparkles,
   Stamp,
   User,
   Users,
@@ -83,6 +84,13 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose(): vo
         title: "Command center",
         icon: <LayoutDashboard aria-hidden />,
         to: "/",
+      },
+      {
+        id: "nav-assistant",
+        group: "Go to",
+        title: "Assistant",
+        icon: <Sparkles aria-hidden />,
+        to: "/assistant",
       },
       { id: "nav-tasks", group: "Go to", title: "Tasks", icon: <CheckSquare aria-hidden />, to: "/tasks" },
       {

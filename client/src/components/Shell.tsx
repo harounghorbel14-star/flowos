@@ -10,6 +10,7 @@ import {
   Moon,
   Search,
   Settings,
+  Sparkles,
   Stamp,
   Sun,
   Users,
@@ -152,6 +153,9 @@ export function Shell() {
           ) : null}
         </NavLink>
 
+        <NavLink to="/assistant" className="nav">
+          <Sparkles aria-hidden /> Assistant
+        </NavLink>
         {can("workflow:read") ? (
           <NavLink to="/workflows" className="nav">
             <Workflow aria-hidden /> Workflows

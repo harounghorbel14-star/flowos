@@ -4,6 +4,7 @@ import cookieParser from "cookie-parser";
 import express, { type NextFunction, type Request, type Response } from "express";
 import helmet from "helmet";
 import { env, isProduction } from "./env";
+import { aiHttpRouter } from "./modules/ai/http";
 import { documentsHttpRouter } from "./modules/documents/http";
 import { createContext } from "./trpc/context";
 import { appRouter } from "./trpc/router";
@@ -70,6 +71,7 @@ export function createApp() {
     }),
   );
   app.use("/api/documents", documentsHttpRouter(csrfGuard));
+  app.use("/api/ai", aiHttpRouter(csrfGuard));
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Not found" });
   });

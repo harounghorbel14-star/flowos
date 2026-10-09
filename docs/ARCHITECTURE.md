@@ -134,6 +134,29 @@ service mutation ──(same tx)──► domain_events (outbox)
   membership and applies the visibility rule in SQL; responds as an attachment
   with `nosniff`, `no-store` and a sandboxing CSP; each download is audited.
 
+## AI assistant
+
+```
+browser ──POST /api/ai/conversations/:id/messages (NDJSON stream)──► runTurn
+   runTurn: lock conversation → append user message ([Context] + [Action update] notes + text)
+     loop ≤ 8: provider.run(system, full history, tools allowed for this user)
+               store assistant content verbatim (thinking/fallback blocks included)
+               for each tool_use: Zod-validate → read tool: execute via services as the user
+                                               → write tool: insert ai_actions PROPOSED (hash, expiry)
+               store all tool_results in one user message
+browser ──ai.confirmAction(actionId, inputHash)──► checks → guarded PROPOSED→EXECUTED → tool.execute in tx → audit
+```
+
+- `AiProvider` is the only dependency on a model vendor. `AnthropicProvider`
+  uses `claude-opus-5-5` via `client.beta.messages.stream` with adaptive
+  thinking (default), `output_config.effort: "medium"`, top-level prompt
+  caching, eager tool-input streaming, and `fallbacks: "default"` for refusals.
+- The system prompt and tool list are static so the prefix caches; the date,
+  user and organization travel in the user message.
+- The transcript is append-only so replayed thinking blocks stay valid.
+- Action outcomes (executed / rejected / failed / expired) are reported to the
+  model as an `[Action update]` note at the start of the next user message.
+
 ## Command center and search
 
 - The command center is a set of SQL counts and short lists over the actor's

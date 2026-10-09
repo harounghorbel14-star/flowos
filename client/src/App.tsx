@@ -4,6 +4,7 @@ import { ErrorState } from "./components/ui";
 import { safeNext } from "./lib/nav";
 import { SessionProvider, useMe } from "./lib/session";
 import { ApprovalDetailPage } from "./pages/ApprovalDetail";
+import { AssistantPage } from "./pages/Assistant";
 import { ApprovalsPage } from "./pages/Approvals";
 import { AcceptInvitePage, LoginPage, SignupPage } from "./pages/Auth";
 import { CommandCenterPage } from "./pages/CommandCenter";
@@ -88,6 +89,8 @@ function AuthedRoutes({ hasOrg }: { hasOrg: boolean }) {
         <Route path="documents" element={<DocumentsPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="approvals/:id" element={<ApprovalDetailPage />} />
+        <Route path="assistant" element={<AssistantPage />} />
+        <Route path="assistant/:id" element={<AssistantPage />} />
         <Route path="workflows" element={<WorkflowsPage />} />
         <Route path="workflows/:id" element={<WorkflowDetailPage />} />
         <Route path="notifications" element={<NotificationsPage />} />

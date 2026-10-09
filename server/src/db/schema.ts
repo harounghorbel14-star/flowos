@@ -510,3 +510,124 @@ export const documents = pgTable(
     index("documents_org_employee_idx").on(t.orgId, t.employeeId),
   ],
 );
+
+// ─── AI assistant ────────────────────────────────────────────────────────────
+
+export const aiActionStatusEnum = pgEnum("ai_action_status", [
+  "PROPOSED",
+  "EXECUTED",
+  "REJECTED",
+  "FAILED",
+  "EXPIRED",
+]);
+
+/** Private to one user within one organization. */
+export const aiConversations = pgTable(
+  "ai_conversations",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    /** Single-flight guard: one model turn at a time per conversation. */
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("ai_conversations_org_id_key").on(t.orgId, t.id),
+    index("ai_conversations_user_idx").on(t.orgId, t.userId, t.updatedAt),
+  ],
+);
+
+/**
+ * Append-only transcript in the exact content-block form sent to and
+ * returned by the model. Never edited: replaying history byte-for-byte keeps
+ * thinking blocks valid and the prompt cache warm.
+ */
+export const aiMessages = pgTable(
+  "ai_messages",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    conversationId: uuid("conversation_id").notNull(),
+    role: text("role").$type<"user" | "assistant">().notNull(),
+    content: jsonb("content").$type<unknown[]>().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("ai_messages_conversation_idx").on(t.conversationId, t.id)],
+);
+
+/** A write proposed by the model. Executes only on explicit user confirmation. */
+export const aiActions = pgTable(
+  "ai_actions",
+  {
+    id: id(),
+    orgId: uuid("org_id").notNull(),
+    conversationId: uuid("conversation_id").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    toolUseId: text("tool_use_id").notNull(),
+    toolName: text("tool_name").notNull(),
+    input: jsonb("input").$type<Record<string, unknown>>().notNull(),
+    /** SHA-256 of the canonical input; the confirmation must present the same hash. */
+    inputHash: text("input_hash").notNull(),
+    summary: text("summary").notNull(),
+    status: aiActionStatusEnum("status").notNull().default("PROPOSED"),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    error: text("error"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** Set once the outcome has been reported back to the model. */
+    reportedAt: timestamp("reported_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("ai_actions_tool_use_key").on(t.conversationId, t.toolUseId),
+    index("ai_actions_conversation_idx").on(t.orgId, t.conversationId),
+  ],
+);
+
+/** Every tool call the model made, executed or not. */
+export const aiToolCalls = pgTable(
+  "ai_tool_calls",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    conversationId: uuid("conversation_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    toolUseId: text("tool_use_id").notNull(),
+    toolName: text("tool_name").notNull(),
+    outcome: text("outcome").$type<"OK" | "ERROR" | "DENIED" | "INVALID" | "PROPOSED">().notNull(),
+    error: text("error"),
+    latencyMs: integer("latency_ms").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("ai_tool_calls_conversation_idx").on(t.orgId, t.conversationId)],
+);
+
+/** One row per model request: tokens, latency, outcome. */
+export const aiUsage = pgTable(
+  "ai_usage",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    conversationId: uuid("conversation_id").notNull(),
+    model: text("model").notNull(),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+    cacheWriteTokens: integer("cache_write_tokens").notNull().default(0),
+    latencyMs: integer("latency_ms").notNull(),
+    stopReason: text("stop_reason"),
+    error: text("error"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("ai_usage_org_idx").on(t.orgId, t.createdAt)],
+);

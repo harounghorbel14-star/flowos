@@ -1,3 +1,4 @@
+import { aiRouter } from "../modules/ai/router";
 import { approvalsRouter } from "../modules/approvals/router";
 import { auditRouter } from "../modules/audit/router";
 import { authRouter } from "../modules/auth/router";
@@ -27,6 +28,7 @@ export const appRouter = router({
   search: searchRouter,
   workflows: workflowsRouter,
   documents: documentsRouter,
+  ai: aiRouter,
 });
 
 export type AppRouter = typeof appRouter;

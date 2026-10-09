@@ -36,7 +36,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["server/**/*.ts", "shared/**/*.ts", "*.config.ts"],
+    files: ["server/**/*.ts", "shared/**/*.ts", "e2e/**/*.ts", "*.config.ts"],
     rules: { "@typescript-eslint/no-restricted-imports": "off" },
   },
 );

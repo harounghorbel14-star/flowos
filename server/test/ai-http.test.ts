@@ -1,0 +1,98 @@
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { randomUUID } from "node:crypto";
+import superjson from "superjson";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createApp } from "../src/app";
+import { aiLimiter } from "../src/modules/ai/assistant";
+import { setAiProvider, type AiMessage, type AiProvider } from "../src/modules/ai/provider";
+import { resetLimiters } from "./helpers";
+
+let server: Server;
+let base: string;
+beforeAll(async () => {
+  server = createApp().listen(0);
+  await new Promise((r) => server.once("listening", r));
+  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+});
+afterAll(() => {
+  setAiProvider(null);
+  return new Promise<void>((r) => server.close(() => r()));
+});
+
+const echo: AiProvider = {
+  model: "scripted-test-model",
+  async run(_req, onText) {
+    onText("Hello ");
+    onText("there.");
+    return {
+      id: "msg_test",
+      type: "message",
+      role: "assistant",
+      model: "scripted-test-model",
+      content: [{ type: "text", text: "Hello there." }],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    } as unknown as AiMessage;
+  },
+};
+
+async function trpc(path: string, input: unknown, headers: Record<string, string>) {
+  const res = await fetch(`${base}/api/trpc/${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-flowos-client": "web", ...headers },
+    body: JSON.stringify(superjson.serialize(input)),
+  });
+  return { res, json: (await res.json()) as { result: { data: { json: Record<string, unknown> } } } };
+}
+
+describe("AI streaming endpoint", () => {
+  it("streams NDJSON events for an authenticated member and enforces CSRF", async () => {
+    resetLimiters();
+    aiLimiter.reset();
+    setAiProvider(echo);
+    const signup = await trpc(
+      "auth.signup",
+      { email: `ai-${randomUUID()}@e.test`, name: "Ai User", password: "longpassword1" },
+      {},
+    );
+    const cookie = signup.res.headers.get("set-cookie")!.split(";")[0]!;
+    const org = (await trpc("orgs.create", { name: "AI Org" }, { cookie })).json.result.data.json;
+    const headers = { cookie, "x-flowos-org": String(org.id) };
+    const convo = (await trpc("ai.createConversation", {}, headers)).json.result.data.json;
+    const url = `${base}/api/ai/conversations/${String(convo.id)}/messages`;
+
+    const noCsrf = await fetch(url, {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({ text: "hi" }),
+    });
+    expect(noCsrf.status).toBe(403);
+    const anon = await fetch(url, {
+      method: "POST",
+      headers: { "x-flowos-client": "web", "content-type": "application/json" },
+      body: JSON.stringify({ text: "hi" }),
+    });
+    expect(anon.status).toBe(401);
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { ...headers, "x-flowos-client": "web", "content-type": "application/json" },
+      body: JSON.stringify({ text: "Say hello" }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/x-ndjson");
+    const events = (await res.text())
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as { type: string; delta?: string });
+    expect(
+      events
+        .filter((e) => e.type === "text")
+        .map((e) => e.delta)
+        .join(""),
+    ).toBe("Hello there.");
+    expect(events.at(-1)).toEqual({ type: "done", stopReason: "end_turn" });
+  });
+});

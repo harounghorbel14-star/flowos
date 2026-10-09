@@ -20,15 +20,16 @@ the stack choice is explained in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Verification summary
 
-| Gate                                                     | Command                                  | Result                                                    |
-| -------------------------------------------------------- | ---------------------------------------- | --------------------------------------------------------- |
-| Formatting                                               | `npm run format:check`                   | pass                                                      |
-| Lint                                                     | `npm run lint`                           | pass (0 warnings)                                         |
-| Type check                                               | `npm run typecheck`                      | pass                                                      |
-| Integration tests (real PostgreSQL 16, real migrations)  | `npm test`                               | 78 / 78 pass                                              |
-| Production build                                         | `npm run build`                          | pass                                                      |
-| Migrations from empty database                           | test global setup + `npm run db:migrate` | pass (6 migrations)                                       |
-| Browser E2E (2 users, 23 steps, desktop + mobile + dark) | `npm run test:e2e`                       | pass against dev servers and against the production build |
+| Gate                                                        | Command                                                 | Result                                                                  |
+| ----------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Formatting                                                  | `npm run format:check`                                  | pass                                                                    |
+| Lint                                                        | `npm run lint`                                          | pass (0 warnings)                                                       |
+| Type check                                                  | `npm run typecheck`                                     | pass                                                                    |
+| Integration tests (real PostgreSQL 16, real migrations)     | `npm test`                                              | 89 / 89 pass                                                            |
+| Production build                                            | `npm run build`                                         | pass                                                                    |
+| Migrations from empty database                              | test global setup + `npm run db:migrate`                | pass (8 migrations)                                                     |
+| Browser E2E (2 users, 24 steps, desktop + mobile + dark)    | `npm run test:e2e`                                      | pass against dev servers and against the production build (`npm start`) |
+| Assistant UI E2E (scripted test provider, real server + DB) | `npm run e2e:ai-harness` + `npm run test:e2e:assistant` | pass (5 steps)                                                          |
 
 ## Features
 
@@ -129,11 +130,36 @@ states. No revenue or invented metrics.
 
 - Tests: `insight.test.ts` (6)
 
-### Phase H — AI operations assistant: NOT IMPLEMENTED
+### Phase H — AI operations assistant: IMPLEMENTED BUT UNVERIFIED against the live model
 
-Reason: not yet built in this branch; additionally no `ANTHROPIC_API_KEY` is
-configured in the build environment, so live model calls cannot be verified.
-The briefing on the command center is explicitly rule-based.
+Everything except a live model call is implemented and tested. **No
+`ANTHROPIC_API_KEY` exists in the build environment, so no request has been
+sent to the Anthropic API.** The assistant logic, tools, confirmation flow,
+persistence and UI were verified with a deterministic scripted provider (a
+test double that calls the real tools against the real database).
+
+| Area                                                                                                                                      | Status                           | Notes                                                                                                          |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Provider abstraction (`AiProvider`)                                                                                                       | IMPLEMENTED AND VERIFIED         | server-side only; key never reaches the browser                                                                |
+| Anthropic adapter (`claude-opus-5-5`, streaming, adaptive thinking, `effort: medium`, prompt caching, `fallbacks: "default"` on refusals) | IMPLEMENTED BUT UNVERIFIED       | type-checked against `@anthropic-ai/sdk` 0.132.1; needs a key to verify                                        |
+| Not-configured state                                                                                                                      | IMPLEMENTED AND VERIFIED         | UI and API say so plainly; no fake answers                                                                     |
+| Streaming to the browser (NDJSON over CSRF-guarded POST)                                                                                  | IMPLEMENTED AND VERIFIED         | HTTP test + browser E2E                                                                                        |
+| Persistent conversations (private per user, append-only transcript)                                                                       | IMPLEMENTED AND VERIFIED         | DB trigger rejects transcript edits                                                                            |
+| Tool registry (name, description, Zod schema, permissions, risk, confirmation policy, audit action)                                       | IMPLEMENTED AND VERIFIED         | 8 read tools, 2 write tools                                                                                    |
+| Permission-aware tools                                                                                                                    | IMPLEMENTED AND VERIFIED         | model only sees tools the user's role allows; every tool calls the regular service functions as the user       |
+| Prepared actions + confirmation                                                                                                           | IMPLEMENTED AND VERIFIED         | hash-bound, user/org-bound, 10-min expiry, single-use, re-authorized at confirm time; chat text cannot confirm |
+| Tool execution history, usage (tokens, cache reads, latency, stop reason, errors)                                                         | IMPLEMENTED AND VERIFIED         | `ai_tool_calls`, `ai_usage`                                                                                    |
+| Refusal handling                                                                                                                          | IMPLEMENTED AND VERIFIED (logic) | partial output discarded, never stored or acted on                                                             |
+| Rate limiting                                                                                                                             | IMPLEMENTED AND VERIFIED         | 20 turns/min per user (in-memory); one turn at a time per conversation                                         |
+
+Tools — read: operational snapshot, search people, get person, list tasks,
+get task, list projects, my approvals, search document metadata. Write
+(confirmation always): create task, update task status.
+
+- Files: `server/src/modules/ai/{provider,tools,assistant,router,http}.ts`, `client/src/pages/Assistant.tsx`, `e2e/{ai-harness.ts,assistant.mjs}`
+- DB: `ai_conversations`, `ai_messages`, `ai_actions`, `ai_tool_calls`, `ai_usage`
+- Tests: `ai.test.ts` (10), `ai-http.test.ts` (1). Mutation check: making `create_task` skip confirmation fails 2 tests.
+- Not implemented: retrieval over document contents (RAG), structured-output reports, more write tools (approvals, workflows), per-org AI budgets, conversation export.
 
 ### Phase I — Global search: IMPLEMENTED AND VERIFIED
 
@@ -172,10 +198,16 @@ None open. Defects found and fixed during this work:
 2. Workflow dispatcher matched events to workflows created after the event (found by integration tests).
 3. Migrate-on-start silently applied a superseded draft migration in development; migrations are now an explicit step.
 4. Audit summaries showed raw enum values; now human labels.
+5. The assistant offered `update_task_status` to read-only viewers (execution would still have been refused by the task service); the tool now requires `task:write_own` (found by tests).
+6. Tool-input parse failures from the SDK surface as `AnthropicError`, not `SyntaxError`; the retry path now catches the right class (found by reading the SDK source).
+7. A response cut off mid tool call would have left a `tool_use` without a `tool_result`, making the next request invalid; such calls are now recorded as not executed (found in self-review, covered by a test).
 
 ## Next recommended phase
 
-Phase H — AI operations assistant on top of the existing services: provider
-abstraction, permission-aware tool registry using service functions, prepared
-actions with explicit confirmation bound to the actor, persisted
-conversations, and usage tracking. Live model calls need an API key to verify.
+1. **Verify the live assistant** with a real `ANTHROPIC_API_KEY`: run a set of
+   representative questions, review answers against the data, check token
+   usage and cache-read rates in `ai_usage`, then mark the adapter verified.
+2. **Production hardening**: shared rate-limit store, email delivery for
+   invitations and password reset, an S3-compatible `StorageAdapter`, CI.
+3. **Phase J** — trends and "what changed this week" from the audit and
+   outbox streams.

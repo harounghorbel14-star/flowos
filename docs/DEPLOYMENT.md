@@ -38,19 +38,28 @@ It needs Playwright's Chromium (`npx playwright install chromium` on a fresh
 machine). Each run creates two accounts, so the signup rate limit allows at most
 two runs per minute per IP.
 
+### Assistant UI test (no API key needed)
+
+```bash
+npm run e2e:ai-harness          # real server + DB on :3200 with a scripted test provider
+npm run test:e2e:assistant      # in another terminal
+```
+
+The harness is test-only code in `e2e/`; it is not part of the build.
+
 ## Configuration
 
-| Variable                  | Required    | Default                 | Purpose                                                                     |
-| ------------------------- | ----------- | ----------------------- | --------------------------------------------------------------------------- |
-| `DATABASE_URL`            | yes         | —                       | PostgreSQL connection string                                                |
-| `APP_ORIGIN`              | yes in prod | `http://localhost:5173` | Public origin; mutations from other origins are rejected                    |
-| `NODE_ENV`                |             | `development`           | `production` enables secure cookies, masked errors, static client serving   |
-| `PORT`                    |             | `3000`                  | HTTP port                                                                   |
-| `TRUST_PROXY`             |             | `0`                     | Number of reverse-proxy hops to trust for client IPs (rate limiting, audit) |
-| `STORAGE_DIR`             |             | `./storage`             | Private document storage directory (must not be web-served; back it up)     |
-| `FLOWOS_MIGRATE_ON_START` |             | `false`                 | Apply migrations at boot — only for single-instance setups                  |
-| `FLOWOS_WORKER`           |             | `true`                  | Run the workflow/expiry worker in this process                              |
-| `ANTHROPIC_API_KEY`       |             | —                       | Reserved for the AI assistant (see IMPLEMENTATION_STATUS)                   |
+| Variable                  | Required    | Default                 | Purpose                                                                              |
+| ------------------------- | ----------- | ----------------------- | ------------------------------------------------------------------------------------ |
+| `DATABASE_URL`            | yes         | —                       | PostgreSQL connection string                                                         |
+| `APP_ORIGIN`              | yes in prod | `http://localhost:5173` | Public origin; mutations from other origins are rejected                             |
+| `NODE_ENV`                |             | `development`           | `production` enables secure cookies, masked errors, static client serving            |
+| `PORT`                    |             | `3000`                  | HTTP port                                                                            |
+| `TRUST_PROXY`             |             | `0`                     | Number of reverse-proxy hops to trust for client IPs (rate limiting, audit)          |
+| `STORAGE_DIR`             |             | `./storage`             | Private document storage directory (must not be web-served; back it up)              |
+| `FLOWOS_MIGRATE_ON_START` |             | `false`                 | Apply migrations at boot — only for single-instance setups                           |
+| `FLOWOS_WORKER`           |             | `true`                  | Run the workflow/expiry worker in this process                                       |
+| `ANTHROPIC_API_KEY`       |             | —                       | Enables the AI assistant (server-side only). Unset: assistant shows "not configured" |
 
 ## Production build
 

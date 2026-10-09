@@ -257,7 +257,7 @@ async function touchProject(tx: Tx, orgId: string, projectId: string) {
     .where(and(eq(projects.orgId, orgId), eq(projects.id, projectId)));
 }
 
-export async function updateTask(db: Database, actor: Actor, id: string, input: Partial<TaskInput>) {
+export async function updateTask(db: Tx, actor: Actor, id: string, input: Partial<TaskInput>) {
   assertCan(actor, "task:read");
   return db.transaction(async (tx) => {
     const before = await loadTask(tx, actor, id, true);

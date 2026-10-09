@@ -78,11 +78,31 @@ permissions in `shared/permissions.ts` and enforced in services.
 - Sanitized file names; random storage keys validated against a strict pattern before touching the filesystem (no path traversal).
 - Files written `0600` in a `0700` directory outside the web root; downloads only via the authorized endpoint with `Content-Disposition: attachment`, `nosniff`, `Cache-Control: private, no-store`, `CSP: default-src 'none'; sandbox`.
 
+## AI assistant
+
+| Control                                                                                                                                                                                                                                   | Where                                       | Verified by                                |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------ |
+| Model runs server-side; API key only in server env; never sent to the browser                                                                                                                                                             | `modules/ai/provider.ts`                    | code review                                |
+| Model sees only tools the user's role permits; each tool calls the normal service functions as the user (same tenant scoping and checks)                                                                                                  | `modules/ai/tools.ts`                       | `ai.test.ts` (viewer, cross-tenant)        |
+| Tool inputs validated with Zod before use (inputs stream un-validated from the API)                                                                                                                                                       | `assistant.ts` `runTool`                    | `ai.test.ts`                               |
+| Writes are only _prepared_; execution requires a separate user request with the action ID and the SHA-256 of the exact input, by the same user in the same org, before expiry (10 min), once, with permissions re-checked at confirm time | `assistant.ts` `confirmAction`              | `ai.test.ts`, browser E2E; mutation-tested |
+| Chat text ("yes, confirm") cannot execute anything                                                                                                                                                                                        | system prompt + no code path                | `ai.test.ts`, browser E2E                  |
+| Tool results are labelled as data, never instructions; document contents are never sent to the model (metadata only)                                                                                                                      | system prompt, tool set                     | code review                                |
+| Refused (partial) output is discarded, never stored or acted on                                                                                                                                                                           | `runTurn`                                   | `ai.test.ts`                               |
+| Conversations private to their user; transcript append-only (DB trigger)                                                                                                                                                                  | schema, migration 0007                      | `ai.test.ts`                               |
+| Proposals and confirmed executions are audited; every tool call and model request is logged with outcome/usage                                                                                                                            | `ai_tool_calls`, `ai_usage`, `audit_events` | `ai.test.ts`                               |
+| Rate limit 20 turns/min/user; one turn at a time per conversation                                                                                                                                                                         | `assistant.ts`                              | `ai.test.ts`                               |
+
+Residual risk: prompt injection via record text (e.g. a task title) could steer
+the model's _read_ behaviour or wording within the user's own permissions; it
+cannot execute writes without the user's confirmation.
+
 ## Secrets
 
 - Configuration is validated at startup; error messages name variables only, never values.
 - `.env*` files are git-ignored (only `.env.example` is committed).
 - No credentials are hard-coded. No AI key is required; when absent the assistant reports that it is not configured.
+- The e2e AI harness (`e2e/ai-harness.ts`) injects a scripted provider for testing; it is not imported by the application.
 
 ## Dependency audit
 

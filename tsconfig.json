@@ -23,5 +23,13 @@
       "@client/*": ["client/src/*"]
     }
   },
-  "include": ["shared", "server", "client/src", "vite.config.ts", "vitest.config.ts", "drizzle.config.ts"]
+  "include": [
+    "shared",
+    "server",
+    "client/src",
+    "e2e",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "drizzle.config.ts"
+  ]
 }

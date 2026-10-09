@@ -18,9 +18,10 @@ does it matter, and what should happen next?_
 - **Workflows** — WHEN → IF → THEN automation (e.g. onboarding tasks when someone joins) with retries, idempotency and run history.
 - **Documents** — private storage, restricted visibility, audited downloads, expiry reminders.
 - **Search** — Cmd/Ctrl+K across everything you are allowed to see.
+- **Assistant** — ask about live data; it uses only tools your role allows and every change waits for your explicit confirmation (requires `ANTHROPIC_API_KEY`; not yet verified against the live API).
 - **Security** — tenant isolation enforced in services _and_ the database, role-based permissions, append-only audit log.
 
-Not built yet: AI assistant, email delivery, integrations, billing. See the status doc.
+Not built yet: email delivery, integrations, billing. See the status doc.
 
 ## Quick start
 

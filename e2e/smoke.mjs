@@ -287,6 +287,11 @@ async function step(name, fn) {
     await a.waitForURL(/\/projects\//);
   });
 
+  await step("assistant honestly reports it is not configured (no API key)", async () => {
+    await a.goto(`${BASE}/assistant`);
+    await a.getByText("The AI assistant is not configured on this server").waitFor();
+  });
+
   await step("audit log shows the trail", async () => {
     await a.goto(`${BASE}/settings/audit`);
     await a.getByText("Approved: Long weekend").waitFor();

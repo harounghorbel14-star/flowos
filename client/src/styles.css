@@ -1411,3 +1411,44 @@ dialog.palette::backdrop {
     transform: rotate(360deg);
   }
 }
+
+/* ─── Assistant ──────────────────────────────────────────────────────────── */
+.assistant-layout {
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  align-items: start;
+}
+.chat-bubble {
+  max-width: 78ch;
+  padding: 10px 14px;
+  border-radius: 12px;
+  line-height: 1.55;
+}
+.chat-bubble.user {
+  align-self: flex-end;
+  background: var(--ink);
+  color: var(--paper);
+  border-bottom-right-radius: 4px;
+}
+.chat-bubble.assistant {
+  align-self: flex-start;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-bottom-left-radius: 4px;
+}
+.chat-input {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  position: sticky;
+  bottom: 12px;
+  background: var(--paper);
+  padding-top: 6px;
+}
+.chat-input .textarea {
+  min-height: 48px;
+}
+@media (max-width: 860px) {
+  .assistant-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
