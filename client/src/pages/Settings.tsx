@@ -32,6 +32,7 @@ function SettingsTabs() {
       </NavLink>
       <NavLink to="/settings/members">Members</NavLink>
       {can("audit:read") ? <NavLink to="/settings/audit">Audit log</NavLink> : null}
+      <NavLink to="/settings/account">Your account</NavLink>
     </nav>
   );
 }
@@ -506,6 +507,120 @@ export function AuditPage() {
           />
         </>
       ) : null}
+    </>
+  );
+}
+
+/** The signed-in user's own security settings (not organization-specific). */
+export function AccountPage() {
+  const toast = useToast();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [repeat, setRepeat] = useState("");
+  const [mismatch, setMismatch] = useState(false);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const change = trpc.auth.changePassword.useMutation({
+    onSuccess: (r) => {
+      setCurrent("");
+      setNext("");
+      setRepeat("");
+      toast.success(
+        r.otherSessionsSignedOut > 0
+          ? `Password changed. Signed out ${r.otherSessionsSignedOut} other session${r.otherSessionsSignedOut === 1 ? "" : "s"}.`
+          : "Password changed.",
+      );
+    },
+  });
+  const signOutOthers = trpc.auth.signOutOtherSessions.useMutation({
+    onSuccess: (r) => {
+      setConfirmSignOut(false);
+      toast.success(
+        r.otherSessionsSignedOut > 0
+          ? `Signed out ${r.otherSessionsSignedOut} other session${r.otherSessionsSignedOut === 1 ? "" : "s"}.`
+          : "No other sessions were signed in.",
+      );
+    },
+    onError: (err) => {
+      setConfirmSignOut(false);
+      toast.error(err);
+    },
+  });
+  const errors = fieldErrors(change.error);
+  const topError = formError(change.error, ["newPassword"]);
+
+  return (
+    <>
+      <PageHeader eyebrow="Settings" title="Your account" lede="Security settings for your sign-in." />
+      <SettingsTabs />
+      <div className="stack" style={{ maxWidth: 680 }}>
+        <Panel title="Change password">
+          <form
+            className="form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (next !== repeat) {
+                setMismatch(true);
+                return;
+              }
+              setMismatch(false);
+              change.mutate({ currentPassword: current, newPassword: next });
+            }}
+          >
+            {topError ? <div className="form-error">{topError}</div> : null}
+            <TextField
+              label="Current password"
+              type="password"
+              autoComplete="current-password"
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+              required
+              maxLength={200}
+            />
+            <TextField
+              label="New password"
+              type="password"
+              autoComplete="new-password"
+              value={next}
+              onChange={(e) => setNext(e.target.value)}
+              required
+              minLength={10}
+              maxLength={200}
+              error={errors.newPassword}
+              help="At least 10 characters, including a letter and a number. Other devices will be signed out."
+            />
+            <TextField
+              label="Repeat new password"
+              type="password"
+              autoComplete="new-password"
+              value={repeat}
+              onChange={(e) => setRepeat(e.target.value)}
+              required
+              maxLength={200}
+              error={mismatch ? "The passwords do not match." : undefined}
+            />
+            <div className="row" style={{ justifyContent: "flex-end" }}>
+              <Button type="submit" variant="primary" loading={change.isPending}>
+                Change password
+              </Button>
+            </div>
+          </form>
+        </Panel>
+        <Panel title="Other devices">
+          <div className="spread" style={{ flexWrap: "wrap" }}>
+            <span className="muted">Sign out every other browser and device where you are signed in.</span>
+            <Button onClick={() => setConfirmSignOut(true)}>Sign out other devices</Button>
+          </div>
+        </Panel>
+      </div>
+      <ConfirmDialog
+        open={confirmSignOut}
+        title="Sign out other devices?"
+        body="Every other session will need to sign in again. This device stays signed in."
+        confirmLabel="Sign out others"
+        loading={signOutOthers.isPending}
+        onConfirm={() => signOutOthers.mutate()}
+        onClose={() => setConfirmSignOut(false)}
+      />
     </>
   );
 }
