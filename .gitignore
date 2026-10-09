@@ -1,0 +1,9 @@
+node_modules
+dist
+coverage
+.env
+.env.*
+!.env.example
+storage/
+*.log
+e2e/.artifacts
