@@ -11,8 +11,8 @@ import { getEmployee, listEmployees } from "../employees/service";
 import { listProjects } from "../projects/service";
 import { createTask, getTask, listTasks, updateTask } from "../tasks/service";
 import type { AiTool } from "./provider";
+import { isoDate } from "../../lib/validation";
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.");
 const uuid = z.string().uuid();
 
 /**

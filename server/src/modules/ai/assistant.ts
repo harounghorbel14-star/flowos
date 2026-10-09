@@ -14,6 +14,7 @@ import { assertCan, can, type Actor } from "../../lib/actor";
 import { audit } from "../../lib/audit";
 import { todayISO } from "../../lib/dates";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../../lib/errors";
+import { logSafeError } from "../../lib/logging";
 import { RateLimiter } from "../../auth/rateLimit";
 import {
   getAiProvider,
@@ -255,7 +256,7 @@ export async function confirmAction(
       .update(aiActions)
       .set({ status: "FAILED", error: message, decidedAt: new Date() })
       .where(and(eq(aiActions.id, action.id), eq(aiActions.status, "PROPOSED")));
-    if (!(err instanceof AppError)) console.error("[ai] action failed:", err);
+    if (!(err instanceof AppError)) console.error("[ai] action failed:", logSafeError(err));
     return { status: "FAILED" as const, error: message };
   }
 }
@@ -428,7 +429,7 @@ async function runTool(
     return result(truncate(JSON.stringify(output)));
   } catch (err) {
     const message = err instanceof AppError ? err.message : "The lookup failed.";
-    if (!(err instanceof AppError)) console.error("[ai] tool failed:", err);
+    if (!(err instanceof AppError)) console.error("[ai] tool failed:", logSafeError(err));
     await log("ERROR", message);
     return result(message, true);
   }
@@ -512,7 +513,7 @@ export async function runTurn(
           error: message,
         });
         if (err instanceof ToolInputParseError && parseRetries++ < 2) continue;
-        console.error("[ai] provider error:", err);
+        console.error("[ai] provider error:", logSafeError(err));
         emit({ type: "error", message: "The assistant could not respond. Please try again." });
         return;
       }

@@ -322,7 +322,8 @@ export async function updateTask(db: Tx, actor: Actor, id: string, input: Partia
 }
 
 export async function deleteTask(db: Database, actor: Actor, id: string) {
-  assertCan(actor, "task:read");
+  // Deleting is a write: a viewer (or someone demoted to viewer) may not delete, even tasks they created.
+  if (!can(actor, "task:write_any")) assertCan(actor, "task:write_own");
   return db.transaction(async (tx) => {
     const task = await loadTask(tx, actor, id, true);
     if (!can(actor, "task:write_any") && task.createdByUserId !== actor.userId) {
@@ -388,8 +389,10 @@ export async function deleteComment(db: Database, actor: Actor, commentId: strin
       .where(and(eq(taskComments.orgId, actor.orgId), eq(taskComments.id, commentId)))
       .for("update");
     if (!comment) throw notFound("Comment");
-    if (comment.authorUserId !== actor.userId && !can(actor, "task:write_any")) {
-      throw forbidden("You can only delete your own comments.");
+    if (!can(actor, "task:write_any")) {
+      if (comment.authorUserId !== actor.userId) throw forbidden("You can only delete your own comments.");
+      // Authors who can no longer comment (e.g. demoted to viewer) cannot delete either.
+      assertCan(actor, "task:comment");
     }
     await tx
       .delete(taskComments)

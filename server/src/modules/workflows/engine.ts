@@ -10,6 +10,7 @@ import { purgeExpiredRateLimits } from "../../auth/rateLimit";
 import { notifyExpiringDocuments } from "../documents/service";
 import { notify } from "../notifications/service";
 import { describeError, executeAction, PermanentError } from "./actions";
+import { logSafeError } from "../../lib/logging";
 
 /** Events produced this many workflow hops deep are recorded but never dispatched (loop guard). */
 export const MAX_DEPTH = 3;
@@ -154,7 +155,7 @@ export async function executeRun(
     return "SUCCEEDED";
   } catch (err) {
     if (!(err instanceof PermanentError) && !(err instanceof AppError))
-      console.error("[workflows] run failed:", err);
+      console.error("[workflows] run failed:", logSafeError(err));
     const message = describeError(err);
     if (failedStep !== null) {
       await db.insert(workflowRunSteps).values({
@@ -240,7 +241,7 @@ export function startWorker(db: Database, intervalMs = 2000): () => Promise<void
     if (current) return;
     current = runWorkerOnce(db)
       .then(() => undefined)
-      .catch((err: unknown) => console.error("[workflows] worker tick failed:", err))
+      .catch((err: unknown) => console.error("[workflows] worker tick failed:", logSafeError(err)))
       .finally(() => {
         current = null;
       });

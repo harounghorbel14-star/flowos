@@ -3,8 +3,7 @@ import { PROJECT_STATUSES } from "@shared/domain";
 import { pageInput } from "../../lib/pagination";
 import { orgProcedure, router } from "../../trpc/trpc";
 import * as service from "./service";
-
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.");
+import { isoDate } from "../../lib/validation";
 
 const fields = z.object({
   name: z.string().trim().min(1).max(120),
