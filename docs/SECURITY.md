@@ -103,6 +103,24 @@ cannot execute writes without the user's confirmation.
 - `.env*` files are git-ignored (only `.env.example` is committed).
 - No credentials are hard-coded. No AI key is required; when absent the assistant reports that it is not configured.
 - The e2e AI harness (`e2e/ai-harness.ts`) injects a scripted provider for testing; it is not imported by the application.
+- `.env.example` must keep `ANTHROPIC_API_KEY=` empty: an empty value means "not configured", while a placeholder string would make the server try to call the API with it.
+
+### Incident: credential committed to `.env.example` (2026-10-09)
+
+- Commit `76ad080` on `main` set `ANTHROPIC_API_KEY` in `.env.example` to a
+  106-character, high-entropy value with an Anthropic credential prefix. It is
+  not a placeholder and must be treated as a **real, compromised credential**.
+  It was not used or tested by this work.
+- **Required action (owner): revoke it in the Anthropic Console** and issue a
+  new key that is stored only as a secret (see [DEPLOYMENT.md](DEPLOYMENT.md#configuring-the-anthropic-api-key)).
+- The value is removed from the working tree by the stabilization PR. It is
+  still in git history (`76ad080`, and as the removed line of the fixing
+  commit) and in any clone or fork made since. History has **not** been
+  rewritten: that needs a force-push to `main` and is only worthwhile together
+  with revocation. Revocation is what makes the exposure harmless.
+- A full-history scan (all branches) for Anthropic, OpenAI-style, AWS, GitHub,
+  Slack, Stripe and Google keys and PEM private keys found no other credential.
+  The only `.env*` file ever tracked is `.env.example`.
 
 ## Dependency audit
 

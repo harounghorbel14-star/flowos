@@ -1,6 +1,6 @@
 # FLOWOS implementation status
 
-Last verified: 2026-10-09, branch `claude/flowos-foundation`.
+Last verified: 2026-10-09 (stabilization pass), branch `claude/flowos-foundation`.
 
 ## Initial audit
 
@@ -20,17 +20,19 @@ the stack choice is explained in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Verification summary
 
-| Gate                                                          | Command                                                 | Result                                                                  |
-| ------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Formatting                                                    | `npm run format:check`                                  | pass                                                                    |
-| Lint                                                          | `npm run lint`                                          | pass (0 warnings)                                                       |
-| Type check                                                    | `npm run typecheck`                                     | pass                                                                    |
-| Integration tests (real PostgreSQL 16, real migrations)       | `npm test`                                              | 98 / 98 pass                                                            |
-| Production build                                              | `npm run build`                                         | pass                                                                    |
-| Migrations from empty database                                | test global setup + `npm run db:migrate`                | pass (9 migrations)                                                     |
-| Browser E2E (2 users, 25 steps, desktop + mobile + dark)      | `npm run test:e2e`                                      | pass against dev servers and against the production build (`npm start`) |
-| CI (GitHub Actions: check gate + E2E on the production build) | `.github/workflows/ci.yml`                              | runs on every pull request (first run: PR #2)                           |
-| Assistant UI E2E (scripted test provider, real server + DB)   | `npm run e2e:ai-harness` + `npm run test:e2e:assistant` | pass (5 steps)                                                          |
+| Gate                                                          | Command                                                 | Result                                                                    |
+| ------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Formatting                                                    | `npm run format:check`                                  | pass                                                                      |
+| Lint                                                          | `npm run lint`                                          | pass (0 warnings)                                                         |
+| Type check                                                    | `npm run typecheck`                                     | pass                                                                      |
+| Integration tests (real PostgreSQL 16, real migrations)       | `npm test`                                              | 99 / 99 pass (13 files, including the production-boot test)               |
+| Production build                                              | `npm run build`                                         | pass                                                                      |
+| Migrations from empty database                                | test global setup + `npm run db:migrate`                | pass (9 migrations)                                                       |
+| Browser E2E (2 users, 25 steps, desktop + mobile + dark)      | `npm run test:e2e`                                      | 25 / 25 against the production build started as CI does; 0 console errors |
+| Production boot (bundle + `node`, `NODE_ENV=production`)      | `server/test/boot.test.ts`                              | pass: no boot migration; worker runs the onboarding workflow              |
+| CI (GitHub Actions: check gate + E2E on the production build) | `.github/workflows/ci.yml`                              | runs on every pull request and push to `main`; see the stabilization PR   |
+| Assistant UI E2E (scripted test provider, real server + DB)   | `npm run e2e:ai-harness` + `npm run test:e2e:assistant` | pass (5 steps)                                                            |
+| Assistant against the live Anthropic API                      | `npm run test:live`                                     | **NOT RUN**: no `ANTHROPIC_API_KEY` configured as a secret                |
 
 ## Features
 
@@ -134,8 +136,11 @@ states. No revenue or invented metrics.
 ### Phase H — AI operations assistant: IMPLEMENTED BUT UNVERIFIED against the live model
 
 Everything except a live model call is implemented and tested. **No
-`ANTHROPIC_API_KEY` exists in the build environment, so no request has been
-sent to the Anthropic API.** The assistant logic, tools, confirmation flow,
+`ANTHROPIC_API_KEY` is configured as a secret in the build environment, so no
+request has been sent to the Anthropic API.** (A key committed to
+`.env.example` on `main` was not used: it is treated as compromised; see
+SECURITY.md.) The live suite `npm run test:live` is written and type-checked
+and fails fast without a key; it has not passed yet because it has not run. The assistant logic, tools, confirmation flow,
 persistence and UI were verified with a deterministic scripted provider (a
 test double that calls the real tools against the real database).
 
@@ -160,6 +165,7 @@ get task, list projects, my approvals, search document metadata. Write
 - Files: `server/src/modules/ai/{provider,tools,assistant,router,http}.ts`, `client/src/pages/Assistant.tsx`, `e2e/{ai-harness.ts,assistant.mjs}`
 - DB: `ai_conversations`, `ai_messages`, `ai_actions`, `ai_tool_calls`, `ai_usage`
 - Tests: `ai.test.ts` (10), `ai-http.test.ts` (1). Mutation check: making `create_task` skip confirmation fails 2 tests.
+- Live tests (not run, need a key): `server/test-live/assistant.live.test.ts` (4): grounded answer via a permitted tool, confirmation required before mutation, viewer gets no write tools, no cross-organization data.
 - Not implemented: retrieval over document contents (RAG), structured-output reports, more write tools (approvals, workflows), per-org AI budgets, conversation export.
 
 ### Phase I — Global search: IMPLEMENTED AND VERIFIED
@@ -209,7 +215,7 @@ Not done: i18n, formal accessibility audit (WCAG), drag-and-drop.
 
 ## Known defects
 
-None open. Defects found and fixed during this work:
+No open code defects. Open security item: the credential committed in `76ad080` must be revoked (SECURITY.md, "Incident"). Defects found and fixed during this work:
 
 1. Post-signup redirect raced the auth-route redirect, sending invited users to onboarding instead of back to their invitation (found by E2E).
 2. Workflow dispatcher matched events to workflows created after the event (found by integration tests).
@@ -218,11 +224,15 @@ None open. Defects found and fixed during this work:
 5. The assistant offered `update_task_status` to read-only viewers (execution would still have been refused by the task service); the tool now requires `task:write_own` (found by tests).
 6. Tool-input parse failures from the SDK surface as `AnthropicError`, not `SyntaxError`; the retry path now catches the right class (found by reading the SDK source).
 7. A response cut off mid tool call would have left a `tool_use` without a `tool_result`, making the next request invalid; such calls are now recorded as not executed (found in self-review, covered by a test).
+8. **Production server broke its own workflow worker.** In the esbuild bundle, the "is this the main module?" check in `db/migrate.ts` was true, so `node dist/server/index.js` ran migrations at every boot and then closed the shared pool. HTTP kept working (it opens a new pool) but the worker failed on every tick, so no workflow ran in production. The CLI entry moved to `db/migrate-cli.ts`. Found by CI's production E2E. Regression test: `boot.test.ts` (fails on the old code with `Cannot use a pool after calling end on the pool`).
+9. CI E2E job set `NODE_ENV=production` for `npm ci`, which skipped devDependencies (`vite: not found`). Now set only on the server step.
+10. `.gitignore` rule `storage/` also ignored `server/src/storage/`, so a clean checkout of `main` did not build; anchored to `/storage/`.
 
 ## Next recommended phase
 
-1. **Verify the live assistant** with a real `ANTHROPIC_API_KEY`: run
-   representative questions, compare answers with the data, check token usage
-   and cache reads in `ai_usage`, then mark the adapter verified.
+1. **Revoke the key committed in `76ad080`**, then configure a new one as a
+   secret (DEPLOYMENT.md, "Configuring the Anthropic API key") and run
+   `npm run test:live`. Only when it passes, mark the Anthropic adapter
+   verified. Phase K stays on hold until then.
 2. **Production hardening**: email delivery (invitations, password reset),
    an S3-compatible `StorageAdapter`, a container image and deployment.

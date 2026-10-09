@@ -34,12 +34,13 @@ server/src/
   index.ts         Process entry: optional migrations, HTTP server, workflow worker
   env.ts           Validated configuration (never prints values)
   auth/            Password hashing, sessions, shared (Postgres) rate limiting
-  db/              Drizzle schema, client, migration runner
+  db/              Drizzle schema, client, migration runner (`migrate-cli.ts` is the CLI entry)
   lib/             Actor, audit writer, outbox emitter, errors, reference validators, pagination
   storage/         Storage adapter interface, local private disk adapter, content sniffing
   trpc/            Context, procedures (public / authed / org-scoped), root router
   modules/<name>/  service.ts (business logic) + router.ts (API surface) [+ http.ts]
-server/test/       Integration tests (real Postgres, real migrations)
+server/test/       Integration tests (real Postgres, real migrations), incl. production-boot test
+server/test-live/  Tests against the live Anthropic API (`npm run test:live`, not part of `npm test`)
 client/src/
   components/      Design-system primitives, shell, command palette, form dialogs
   pages/           One file per screen
