@@ -17,16 +17,6 @@ jobs:
     name: Format, lint, typecheck, tests, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: flowos
-          POSTGRES_PASSWORD: flowos
-          POSTGRES_DB: flowos_test
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U flowos -d flowos_test" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       TEST_DATABASE_URL: postgres://flowos:flowos@localhost:5432/flowos_test
     steps:
@@ -35,6 +25,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # PostgreSQL 16 ships with the Ubuntu runner image; starting it avoids pulling a
+      # container image (Docker Hub rate-limits anonymous pulls on shared runners).
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          for i in $(seq 1 20); do pg_isready -h localhost -q && break; sleep 1; done
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "create role flowos login password 'flowos'"
+          sudo -u postgres createdb -O flowos flowos_test
+          pg_isready -h localhost
       - run: npm ci
       - run: npm run check
 
@@ -42,16 +41,6 @@ jobs:
     name: Browser E2E (production build)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: flowos
-          POSTGRES_PASSWORD: flowos
-          POSTGRES_DB: flowos
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U flowos -d flowos" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       DATABASE_URL: postgres://flowos:flowos@localhost:5432/flowos
       PORT: "3000"
@@ -64,6 +53,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # PostgreSQL 16 ships with the Ubuntu runner image; starting it avoids pulling a
+      # container image (Docker Hub rate-limits anonymous pulls on shared runners).
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          for i in $(seq 1 20); do pg_isready -h localhost -q && break; sleep 1; done
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "create role flowos login password 'flowos'"
+          sudo -u postgres createdb -O flowos flowos
+          pg_isready -h localhost
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run build
