@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, lt } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { sessions, users } from "../db/schema";
 import { generateToken, hashToken } from "../lib/tokens";
@@ -75,4 +75,10 @@ export async function validateSession(
 
 export async function revokeSession(db: Database, sessionId: string): Promise<void> {
   await db.delete(sessions).where(eq(sessions.id, sessionId));
+}
+
+/** Delete expired sessions (they are already rejected on use). */
+export async function purgeExpiredSessions(db: Database): Promise<number> {
+  const result = await db.delete(sessions).where(lt(sessions.expiresAt, new Date()));
+  return result.rowCount ?? 0;
 }

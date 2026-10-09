@@ -82,6 +82,36 @@ describe("workflow engine", () => {
     );
   });
 
+  it("fails a run abandoned on its last attempt instead of retrying it forever", async () => {
+    const { owner, org, as, manager } = await onboardingSetup();
+    await as(owner).employees.create({
+      firstName: "Abe",
+      lastName: "Andoned",
+      email: email(),
+      managerId: manager.id,
+    });
+    await dispatchEvents(db());
+    const [run] = await db()
+      .select()
+      .from(workflowRuns)
+      .where(and(eq(workflowRuns.orgId, org.id), eq(workflowRuns.status, "PENDING")));
+    // Simulate a worker that crashed mid-run on the final attempt.
+    await db()
+      .update(workflowRuns)
+      .set({ status: "RUNNING", attempts: run!.maxAttempts, lockedUntil: new Date(Date.now() - 1000) })
+      .where(eq(workflowRuns.id, run!.id));
+
+    await runDueWorkflows(db());
+
+    const [after] = await db().select().from(workflowRuns).where(eq(workflowRuns.id, run!.id));
+    expect(after!.status).toBe("FAILED");
+    expect(after!.attempts).toBe(run!.maxAttempts); // not re-claimed
+    expect(after!.error).toMatch(/worker stopped/);
+    expect((await as(owner).notifications.list({})).items.some((n) => n.type === "WORKFLOW_FAILED")).toBe(
+      true,
+    );
+  });
+
   it("respects conditions", async () => {
     const { owner, org, as, wf } = await onboardingSetup();
     await as(owner).employees.create({

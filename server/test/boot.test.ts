@@ -23,6 +23,15 @@ let output = "";
 let outDir: string | undefined;
 let outfile = "";
 
+const childEnv = (port: number): NodeJS.ProcessEnv => ({
+  PATH: process.env.PATH,
+  NODE_ENV: "production",
+  DATABASE_URL: process.env.DATABASE_URL,
+  APP_ORIGIN: `http://localhost:${port}`,
+  PORT: String(port),
+  STORAGE_DIR: process.env.STORAGE_DIR,
+});
+
 async function freePort(): Promise<number> {
   const srv = createServer().listen(0);
   await once(srv, "listening");
@@ -70,14 +79,7 @@ describe("production boot", () => {
     const port = await freePort();
     child = spawn(process.execPath, [outfile], {
       cwd: root,
-      env: {
-        PATH: process.env.PATH,
-        NODE_ENV: "production",
-        DATABASE_URL: process.env.DATABASE_URL,
-        APP_ORIGIN: `http://localhost:${port}`,
-        PORT: String(port),
-        STORAGE_DIR: process.env.STORAGE_DIR,
-      },
+      env: childEnv(port),
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout!.on("data", (d: Buffer) => (output += d.toString()));
@@ -133,6 +135,27 @@ describe("production boot", () => {
     const ready = await fetch(`http://localhost:${port}/api/ready`);
     expect(ready.status).toBe(200);
 
+    // A database restart drops idle connections: the server must survive and reconnect.
+    await db().execute(sql`
+      select pg_terminate_backend(pid) from pg_stat_activity
+       where datname = current_database() and pid <> pg_backend_pid() and state = 'idle'`);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(child.exitCode).toBeNull();
+    await waitFor(
+      async () => ((await fetch(`http://localhost:${port}/api/ready`)).ok ? true : undefined),
+      10_000,
+      "readiness after the database dropped connections",
+    );
+
+    // A second instance on the same port must fail loudly, not exit 0.
+    const clash = spawn(process.execPath, [outfile], {
+      cwd: root,
+      env: { ...childEnv(port), FLOWOS_WORKER: "false" },
+      stdio: "ignore",
+    });
+    const [clashCode] = (await once(clash, "exit")) as [number | null];
+    expect(clashCode).toBe(1);
+
     // SIGTERM: finish in-flight work, close the pool, exit 0.
     const exited = once(child, "exit");
     child.kill("SIGTERM");
@@ -169,4 +192,17 @@ describe("production boot", () => {
       await once(proc, "exit");
     }
   }, 60_000);
+
+  it("refuses to start in production without APP_ORIGIN, naming only the variable", async () => {
+    const port = await freePort();
+    const env: NodeJS.ProcessEnv = { ...childEnv(port), FLOWOS_WORKER: "false" };
+    delete env.APP_ORIGIN;
+    const proc = spawn(process.execPath, [outfile], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
+    let err = "";
+    proc.stderr!.on("data", (d: Buffer) => (err += d.toString()));
+    const [code] = (await once(proc, "exit")) as [number | null];
+    expect(code).toBe(1);
+    expect(err).toContain("Missing required production configuration: APP_ORIGIN");
+    expect(err).not.toContain("postgres://");
+  }, 30_000);
 });

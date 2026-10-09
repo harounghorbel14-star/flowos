@@ -1,4 +1,4 @@
-import { createApp } from "./app";
+import { createApp, markDraining } from "./app";
 import { runMigrations } from "./db/migrate";
 import { closeDb, getDb } from "./db/client";
 import { env } from "./env";
@@ -17,12 +17,26 @@ async function main() {
   const server = app.listen(config.PORT, () => {
     console.log(`FLOWOS API listening on :${config.PORT} (${config.NODE_ENV})`);
   });
+  // e.g. port already in use: exit non-zero so the supervisor notices.
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    console.error(`Failed to start HTTP server: ${err.code ?? err.message}`);
+    process.exit(1);
+  });
+  // Outlive typical load-balancer idle timeouts (60 s) to avoid sporadic 502s on reused connections.
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
+  if (config.NODE_ENV === "production" && config.TRUST_PROXY === 0) {
+    console.warn(
+      "TRUST_PROXY=0: client IPs are taken from the socket. Behind a load balancer, set TRUST_PROXY to the number of proxy hops, otherwise all clients share one rate-limit bucket.",
+    );
+  }
 
   let stopping = false;
   const shutdown = (signal: string) => {
     if (stopping) return;
     stopping = true;
     console.log(`${signal} received: shutting down`);
+    markDraining();
     const force = setTimeout(() => {
       console.error("Shutdown timed out; exiting.");
       process.exit(1);

@@ -39,6 +39,12 @@ function isLocalhost(origin: string) {
   }
 }
 
+let draining = false;
+/** Called on shutdown so load balancers stop routing here before connections close. */
+export function markDraining() {
+  draining = true;
+}
+
 export function createApp() {
   const app = express();
   app.disable("x-powered-by");
@@ -65,6 +71,10 @@ export function createApp() {
   });
   // Readiness: the database answers within 2 s. Load balancers should route on this.
   app.get("/api/ready", async (_req, res) => {
+    if (draining) {
+      res.status(503).json({ ok: false, error: "shutting down" });
+      return;
+    }
     let timer: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
@@ -98,8 +108,19 @@ export function createApp() {
 
   if (isProduction()) {
     const clientDir = path.resolve(process.cwd(), "dist/client");
+    // Vite's assets are content-hashed: cache forever. A missing one is a 404 (not the SPA page),
+    // so a tab left open across a deploy fails visibly instead of with a MIME-type error.
+    app.use(
+      "/assets",
+      express.static(path.join(clientDir, "assets"), { index: false, immutable: true, maxAge: "1y" }),
+      (_req: Request, res: Response) => {
+        res.status(404).end();
+      },
+    );
     app.use(express.static(clientDir, { index: false, maxAge: "1h" }));
+    // The SPA shell must always be revalidated so users pick up new deploys.
     app.get(/^(?!\/api\/).*/, (_req, res) => {
+      res.setHeader("Cache-Control", "no-cache");
       res.sendFile(path.join(clientDir, "index.html"));
     });
   }

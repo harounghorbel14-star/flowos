@@ -12,6 +12,9 @@ const schema = z.object({
 
 export type Env = z.infer<typeof schema>;
 
+/** Variables that have a development default but must be set explicitly in production. */
+const REQUIRED_IN_PRODUCTION = ["APP_ORIGIN"] as const;
+
 let cached: Env | undefined;
 
 export function env(): Env {
@@ -21,6 +24,10 @@ export function env(): Env {
       // Print variable names only — never values, which may be secrets.
       const names = parsed.error.issues.map((i) => i.path.join(".")).join(", ");
       throw new Error(`Invalid environment configuration: ${names}`);
+    }
+    if (parsed.data.NODE_ENV === "production") {
+      const missing = REQUIRED_IN_PRODUCTION.filter((name) => !process.env[name]);
+      if (missing.length) throw new Error(`Missing required production configuration: ${missing.join(", ")}`);
     }
     cached = parsed.data;
   }
