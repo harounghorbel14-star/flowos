@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { PROJECT_STATUSES, type ProjectStatus } from "@shared/domain";
 import { personName } from "../../lib/format";
-import { errorMessage, fieldErrors, trpc } from "../../lib/trpc";
+import { fieldErrors, formError, trpc } from "../../lib/trpc";
 import { useToast } from "../toast";
 import { Button, enumOptions, Modal, SelectField, TextAreaField, TextField } from "../ui";
 
@@ -15,6 +15,9 @@ export interface ProjectFormValues {
   dueDate: string;
   memberIds: string[];
 }
+
+/** Fields rendered with an inline error; any other field error shows at the top of the form. */
+const SHOWN = ["name", "description", "status", "ownerEmployeeId", "startDate", "dueDate"];
 
 const EMPTY: ProjectFormValues = {
   name: "",
@@ -60,6 +63,7 @@ function Inner({
   const update = trpc.projects.update.useMutation({ onSuccess: (p) => done(p.id) });
   const mutation = editing ? update : create;
   const errors = fieldErrors(mutation.error);
+  const topError = formError(mutation.error, SHOWN);
   const set =
     <K extends keyof ProjectFormValues>(k: K) =>
     (e: { target: { value: string } }) =>
@@ -105,23 +109,30 @@ function Inner({
           submit();
         }}
       >
-        {mutation.error && Object.keys(errors).length === 0 ? (
-          <div className="form-error">{errorMessage(mutation.error)}</div>
-        ) : null}
+        {topError ? <div className="form-error">{topError}</div> : null}
         <TextField
           label="Name"
           required
           autoFocus
+          maxLength={120}
           value={v.name}
           onChange={set("name")}
           error={errors.name}
         />
-        <TextAreaField label="Description" value={v.description} onChange={set("description")} rows={3} />
+        <TextAreaField
+          label="Description"
+          maxLength={5000}
+          value={v.description}
+          onChange={set("description")}
+          error={errors.description}
+          rows={3}
+        />
         <div className="form-row">
           <SelectField
             label="Status"
             value={v.status}
             onChange={set("status")}
+            error={errors.status}
             options={enumOptions(PROJECT_STATUSES)}
           />
           <SelectField
@@ -129,6 +140,7 @@ function Inner({
             value={v.ownerEmployeeId}
             onChange={set("ownerEmployeeId")}
             placeholder="No owner"
+            error={errors.ownerEmployeeId}
             options={(employees.data ?? []).map((e) => ({
               value: e.id,
               label: personName(e.firstName, e.lastName),
@@ -136,7 +148,13 @@ function Inner({
           />
         </div>
         <div className="form-row">
-          <TextField label="Start date" type="date" value={v.startDate} onChange={set("startDate")} />
+          <TextField
+            label="Start date"
+            type="date"
+            value={v.startDate}
+            onChange={set("startDate")}
+            error={errors.startDate}
+          />
           <TextField
             label="Due date"
             type="date"

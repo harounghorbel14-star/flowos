@@ -203,6 +203,13 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose(): vo
 
   useEffect(() => setIndex(0), [q]);
 
+  // Keep the keyboard-selected option visible (its <li> includes any group header).
+  const activeId = items[index]?.id;
+  useEffect(() => {
+    if (!open || !activeId) return;
+    document.getElementById(`pi-${activeId}`)?.closest("li")?.scrollIntoView({ block: "nearest" });
+  }, [open, activeId]);
+
   const go = (item: Item | undefined) => {
     if (!item) return;
     onClose();
@@ -235,7 +242,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose(): vo
           role="combobox"
           aria-expanded="true"
           aria-controls="palette-results"
-          aria-activedescendant={items[index] ? `pi-${items[index]!.id}` : undefined}
+          aria-activedescendant={activeId ? `pi-${activeId}` : undefined}
           onKeyDown={(e) => {
             if (e.key === "ArrowDown") {
               e.preventDefault();

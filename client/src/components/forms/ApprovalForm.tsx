@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { APPROVAL_TYPES, LEAVE_TYPES, label, type ApprovalType } from "@shared/domain";
-import { errorMessage, fieldErrors, trpc } from "../../lib/trpc";
+import { fieldErrors, formError, trpc } from "../../lib/trpc";
 import { useToast } from "../toast";
 import { Button, enumOptions, Modal, SelectField, TextAreaField, TextField } from "../ui";
 
@@ -11,6 +11,28 @@ const HELP: Record<ApprovalType, string> = {
   PURCHASE: "Spending that needs a budget holder’s approval.",
   GENERAL: "Any other decision that needs a named approver.",
 };
+
+/** Client-side checks for the type-specific details, named after the fields the user sees. */
+function validateDetails(type: ApprovalType, p: Record<string, string>): Record<string, string> {
+  const errors: Record<string, string> = {};
+  const blank = (k: string) => !(p[k] ?? "").trim();
+  if (type === "LEAVE") {
+    if (blank("startDate")) errors.startDate = "Choose the first day of leave (From).";
+    if (blank("endDate")) errors.endDate = "Choose the last day of leave (To).";
+    if (!errors.startDate && !errors.endDate && p.endDate! < p.startDate!) {
+      errors.endDate = "The To date cannot be before the From date.";
+    }
+  }
+  if (type === "PURCHASE") {
+    if (blank("vendor")) errors.vendor = "Enter the vendor.";
+    if (!(Number(p.amount) > 0)) errors.amount = "Enter an amount greater than 0.";
+    if (!/^[A-Za-z]{3}$/.test((p.currency ?? "").trim()))
+      errors.currency = "Use a 3-letter ISO code, e.g. EUR.";
+  }
+  if (type === "HR" && blank("category")) errors.category = "Enter a category.";
+  if (type === "DOCUMENT" && blank("documentName")) errors.documentName = "Enter the document name.";
+  return errors;
+}
 
 export function ApprovalFormDialog({
   open,
@@ -41,9 +63,18 @@ function Inner({ onClose, onSaved }: { onClose(): void; onSaved?(id: string): vo
       onSaved?.(r.id);
     },
   });
-  const errors = fieldErrors(create.error);
-  const setField = (k: string) => (e: { target: { value: string } }) =>
+  const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
+  const errors: Record<string, string | undefined> = { ...fieldErrors(create.error), ...detailErrors };
+  const topError = formError(create.error, ["type", "title", "description", "approverUserId"]);
+  const setField = (k: string) => (e: { target: { value: string } }) => {
     setP((s) => ({ ...s, [k]: e.target.value }));
+    setDetailErrors((d) => {
+      if (!(k in d)) return d;
+      const rest = { ...d };
+      delete rest[k];
+      return rest;
+    });
+  };
 
   const payload = (): Record<string, unknown> => {
     switch (type) {
@@ -59,8 +90,12 @@ function Inner({ onClose, onSaved }: { onClose(): void; onSaved?(id: string): vo
         return {};
     }
   };
-  const submit = () =>
+  const submit = () => {
+    const problems = validateDetails(type, p);
+    setDetailErrors(problems);
+    if (Object.keys(problems).length > 0) return;
     create.mutate({ type, title, description: description || null, approverUserId, payload: payload() });
+  };
   const noApprovers = approvers.data && approvers.data.length === 0;
 
   return (
@@ -90,9 +125,7 @@ function Inner({ onClose, onSaved }: { onClose(): void; onSaved?(id: string): vo
           submit();
         }}
       >
-        {create.error && Object.keys(errors).length === 0 ? (
-          <div className="form-error">{errorMessage(create.error)}</div>
-        ) : null}
+        {topError ? <div className="form-error">{topError}</div> : null}
         {noApprovers ? (
           <div className="form-error">
             Nobody else in this organization can approve requests yet. Ask an admin to make someone a manager.
@@ -102,7 +135,10 @@ function Inner({ onClose, onSaved }: { onClose(): void; onSaved?(id: string): vo
           <SelectField
             label="Type"
             value={type}
-            onChange={(e) => setType(e.target.value as ApprovalType)}
+            onChange={(e) => {
+              setType(e.target.value as ApprovalType);
+              setDetailErrors({});
+            }}
             options={enumOptions(APPROVAL_TYPES)}
             help={HELP[type]}
           />
@@ -122,6 +158,7 @@ function Inner({ onClose, onSaved }: { onClose(): void; onSaved?(id: string): vo
           label="Title"
           required
           value={title}
+          maxLength={200}
           onChange={(e) => setTitle(e.target.value)}
           error={errors.title}
           placeholder={type === "LEAVE" ? "Summer holiday" : "What needs approving?"}
@@ -141,20 +178,30 @@ function Inner({ onClose, onSaved }: { onClose(): void; onSaved?(id: string): vo
                 required
                 value={p.startDate ?? ""}
                 onChange={setField("startDate")}
+                error={errors.startDate}
               />
               <TextField
                 label="To"
                 type="date"
                 required
+                min={p.startDate || undefined}
                 value={p.endDate ?? ""}
                 onChange={setField("endDate")}
+                error={errors.endDate}
               />
             </div>
           </div>
         ) : null}
         {type === "PURCHASE" ? (
           <div className="form-row">
-            <TextField label="Vendor" required value={p.vendor ?? ""} onChange={setField("vendor")} />
+            <TextField
+              label="Vendor"
+              required
+              maxLength={120}
+              value={p.vendor ?? ""}
+              onChange={setField("vendor")}
+              error={errors.vendor}
+            />
             <div className="form-row">
               <TextField
                 label="Amount"
@@ -164,12 +211,14 @@ function Inner({ onClose, onSaved }: { onClose(): void; onSaved?(id: string): vo
                 required
                 value={p.amount ?? ""}
                 onChange={setField("amount")}
+                error={errors.amount}
               />
               <TextField
                 label="Currency"
                 maxLength={3}
                 value={p.currency ?? ""}
                 onChange={setField("currency")}
+                error={errors.currency}
                 help="ISO code, e.g. EUR"
               />
             </div>
@@ -179,8 +228,10 @@ function Inner({ onClose, onSaved }: { onClose(): void; onSaved?(id: string): vo
           <TextField
             label="Category"
             required
+            maxLength={80}
             value={p.category ?? ""}
             onChange={setField("category")}
+            error={errors.category}
             placeholder="e.g. Equipment, Role change"
           />
         ) : null}
@@ -188,14 +239,18 @@ function Inner({ onClose, onSaved }: { onClose(): void; onSaved?(id: string): vo
           <TextField
             label="Document name"
             required
+            maxLength={200}
             value={p.documentName ?? ""}
             onChange={setField("documentName")}
+            error={errors.documentName}
           />
         ) : null}
         <TextAreaField
           label="Details"
+          maxLength={5000}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
+          error={errors.description}
           rows={3}
         />
         <button type="submit" hidden />

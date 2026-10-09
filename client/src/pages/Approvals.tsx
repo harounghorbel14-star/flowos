@@ -73,14 +73,26 @@ export function ApprovalsPage() {
         }
       />
       <nav className="tabs" aria-label="Approval views">
-        <button aria-selected={box === "inbox"} onClick={() => update({ box: null, status: null })}>
+        <button
+          type="button"
+          aria-pressed={box === "inbox"}
+          onClick={() => update({ box: null, status: null })}
+        >
           Waiting on me
         </button>
-        <button aria-selected={box === "outbox"} onClick={() => update({ box: "outbox", status: null })}>
+        <button
+          type="button"
+          aria-pressed={box === "outbox"}
+          onClick={() => update({ box: "outbox", status: null })}
+        >
           My requests
         </button>
         {can("approval:read_all") ? (
-          <button aria-selected={box === "all"} onClick={() => update({ box: "all", status: null })}>
+          <button
+            type="button"
+            aria-pressed={box === "all"}
+            onClick={() => update({ box: "all", status: null })}
+          >
             All requests
           </button>
         ) : null}

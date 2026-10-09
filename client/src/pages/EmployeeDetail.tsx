@@ -69,7 +69,7 @@ export function EmployeeDetailPage() {
       />
       <div className="grid main-side">
         <div className="stack">
-          <div className="metrics" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+          <div className="metrics three">
             <div className="metric">
               <span className="eyebrow">Open tasks</span>
               <span className="value">{e.taskStats.open}</span>
@@ -87,6 +87,8 @@ export function EmployeeDetailPage() {
             </div>
           </div>
           <Panel title="Current work" flush>
+            {tasks.error ? <ErrorState error={tasks.error} onRetry={() => void tasks.refetch()} /> : null}
+            {tasks.isLoading ? <SkeletonRows rows={3} /> : null}
             {tasks.data && tasks.data.items.length === 0 ? (
               <EmptyState compact title="No open tasks" />
             ) : (
@@ -111,6 +113,8 @@ export function EmployeeDetailPage() {
             action={can("document:upload") ? <UploadButton employeeId={e.id} /> : null}
             flush
           >
+            {docs.error ? <ErrorState error={docs.error} onRetry={() => void docs.refetch()} /> : null}
+            {docs.isLoading ? <SkeletonRows rows={2} /> : null}
             {docs.data && docs.data.total === 0 ? (
               <EmptyState compact title="No documents">
                 Contracts, IDs and certificates about {e.firstName} that you can see appear here.

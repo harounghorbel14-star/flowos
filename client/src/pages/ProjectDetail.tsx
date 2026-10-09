@@ -144,6 +144,7 @@ export function ProjectDetailPage() {
           }
         >
           {tasks.isLoading ? <SkeletonRows rows={3} /> : null}
+          {tasks.error ? <ErrorState error={tasks.error} onRetry={() => void tasks.refetch()} /> : null}
           {tasks.data && tasks.data.total === 0 ? (
             <EmptyState compact title="No tasks in this project">
               Add the first task to start tracking progress.

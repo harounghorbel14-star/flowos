@@ -18,7 +18,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { label } from "@shared/domain";
 import { useOrg } from "../lib/session";
@@ -46,6 +46,8 @@ export function Shell() {
   const toast = useToast();
   const utils = trpc.useUtils();
   const queryClient = useQueryClient();
+  const railRef = useRef<HTMLElement>(null);
+  const navToggleRef = useRef<HTMLButtonElement>(null);
 
   const unread = trpc.notifications.unreadCount.useQuery(undefined, { refetchInterval: 30_000 });
   const inbox = trpc.approvals.list.useQuery(
@@ -63,6 +65,25 @@ export function Shell() {
   });
 
   useEffect(() => setNavOpen(false), [location.pathname]);
+
+  const closeNav = () => {
+    setNavOpen(false);
+    navToggleRef.current?.focus();
+  };
+
+  // Mobile drawer: move focus into it on open; Escape closes it and returns focus to the toggle.
+  useEffect(() => {
+    if (!navOpen) return;
+    railRef.current?.querySelector<HTMLElement>("a, button, select")?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setNavOpen(false);
+        navToggleRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navOpen]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -99,7 +120,7 @@ export function Shell() {
 
   return (
     <div className={navOpen ? "shell nav-open" : "shell"}>
-      <nav className="rail" aria-label="Main navigation">
+      <nav className="rail" id="app-rail" ref={railRef} aria-label="Main navigation">
         <NavLink to="/" className="brand" aria-label="FLOWOS home">
           <span className="brand-mark" aria-hidden>
             F
@@ -206,11 +227,18 @@ export function Shell() {
           </button>
         </div>
       </nav>
-      {navOpen ? <div className="scrim" onClick={() => setNavOpen(false)} aria-hidden /> : null}
+      {navOpen ? <div className="scrim" onClick={closeNav} aria-hidden /> : null}
 
       <div className="main">
         <div className="topbar">
-          <button className="btn icon ghost" onClick={() => setNavOpen(true)} aria-label="Open navigation">
+          <button
+            ref={navToggleRef}
+            className="btn icon ghost"
+            onClick={() => setNavOpen(true)}
+            aria-label="Open navigation"
+            aria-expanded={navOpen}
+            aria-controls="app-rail"
+          >
             <Menu size={18} aria-hidden />
           </button>
           <span className="brand-name" style={{ color: "var(--ink)" }}>

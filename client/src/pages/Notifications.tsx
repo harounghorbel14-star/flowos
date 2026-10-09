@@ -74,7 +74,10 @@ export function NotificationsPage() {
                       }}
                     />
                     <div className="grow">
-                      <div style={{ fontWeight: n.readAt ? 400 : 600 }}>{n.title}</div>
+                      <div style={{ fontWeight: n.readAt ? 400 : 600 }}>
+                        {n.readAt ? null : <span className="sr-only">Unread: </span>}
+                        {n.title}
+                      </div>
                       {n.body ? (
                         <div className="muted truncate" style={{ fontSize: 13 }}>
                           {n.body}

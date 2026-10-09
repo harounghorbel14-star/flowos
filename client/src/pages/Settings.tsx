@@ -21,7 +21,7 @@ import {
 } from "../components/ui";
 import { formatDateTime, timeAgo } from "../lib/format";
 import { useOrg } from "../lib/session";
-import { errorMessage, fieldErrors, trpc } from "../lib/trpc";
+import { errorMessage, fieldErrors, formError, trpc } from "../lib/trpc";
 
 function SettingsTabs() {
   const { can } = useOrg();
@@ -62,14 +62,16 @@ export function OrgSettingsPage() {
     onError: toast.error,
   });
   const errors = fieldErrors(save.error);
+  const topError = formError(save.error, ["name", "taskPrefix"]);
   const editable = can("org:update");
+  const roleName = label(org.role).toLowerCase();
 
   return (
     <>
       <PageHeader
         eyebrow="Settings"
         title={org.name}
-        lede={`You are ${label(org.role).toLowerCase() === "admin" ? "an admin" : `a ${label(org.role).toLowerCase()}`} of this organization.`}
+        lede={`You are ${/^[aeiou]/.test(roleName) ? "an" : "a"} ${roleName} of this organization.`}
       />
       <SettingsTabs />
       {current.error ? <ErrorState error={current.error} /> : null}
@@ -86,9 +88,7 @@ export function OrgSettingsPage() {
                 });
               }}
             >
-              {save.error && Object.keys(errors).length === 0 ? (
-                <div className="form-error">{errorMessage(save.error)}</div>
-              ) : null}
+              {topError ? <div className="form-error">{topError}</div> : null}
               <TextField
                 label="Organization name"
                 value={name ?? current.data.name}
@@ -161,6 +161,7 @@ export function MembersPage() {
   const [role, setRole] = useState<Role>("MEMBER");
   const [createdLink, setCreatedLink] = useState<string | null>(null);
   const [removing, setRemoving] = useState<{ membershipId: string; name: string } | null>(null);
+  const [revoking, setRevoking] = useState<{ invitationId: string; email: string } | null>(null);
   const invite = trpc.orgs.invite.useMutation({
     onSuccess: async (res) => {
       await utils.orgs.invitations.invalidate();
@@ -168,7 +169,11 @@ export function MembersPage() {
     },
   });
   const revoke = trpc.orgs.revokeInvitation.useMutation({
-    onSuccess: () => utils.orgs.invitations.invalidate(),
+    onSuccess: async () => {
+      await utils.orgs.invitations.invalidate();
+      toast.success("Invitation revoked.");
+      setRevoking(null);
+    },
     onError: toast.error,
   });
   const changeRole = trpc.orgs.changeRole.useMutation({
@@ -279,7 +284,11 @@ export function MembersPage() {
                       {formatDateTime(i.expiresAt)}
                     </div>
                   </div>
-                  <Button size="sm" onClick={() => revoke.mutate({ invitationId: i.id })}>
+                  <Button
+                    size="sm"
+                    aria-label={`Revoke invitation for ${i.email}`}
+                    onClick={() => setRevoking({ invitationId: i.id, email: i.email })}
+                  >
                     Revoke
                   </Button>
                 </li>
@@ -392,19 +401,37 @@ export function MembersPage() {
         loading={remove.isPending}
         onConfirm={() => removing && remove.mutate({ membershipId: removing.membershipId })}
       />
+      <ConfirmDialog
+        open={revoking !== null}
+        onClose={() => setRevoking(null)}
+        title="Revoke this invitation?"
+        body={`The link sent to ${revoking?.email ?? "this person"} stops working immediately. You can invite them again later.`}
+        confirmLabel="Revoke invitation"
+        danger
+        loading={revoke.isPending}
+        onConfirm={() => revoking && revoke.mutate({ invitationId: revoking.invitationId })}
+      />
     </>
   );
 }
 
-const ENTITY_TYPES = [
-  "task",
-  "project",
-  "employee",
-  "department",
-  "approval",
-  "membership",
-  "invitation",
-  "organization",
+/**
+ * Every entity type the server writes to an organization's audit log, with a readable label.
+ * ("user" events — sign-ups, sign-ins, password changes — are account-level with no
+ * organization, so they never appear here and are not offered as a filter.)
+ */
+const ENTITY_TYPES: { value: string; label: string }[] = [
+  { value: "task", label: "Tasks" },
+  { value: "project", label: "Projects" },
+  { value: "employee", label: "Employees" },
+  { value: "department", label: "Departments" },
+  { value: "approval", label: "Approvals" },
+  { value: "document", label: "Documents" },
+  { value: "workflow", label: "Workflows" },
+  { value: "ai_action", label: "Assistant actions" },
+  { value: "membership", label: "Memberships" },
+  { value: "invitation", label: "Invitations" },
+  { value: "organization", label: "Organization" },
 ];
 
 export function AuditPage() {
@@ -432,8 +459,8 @@ export function AuditPage() {
         >
           <option value="">All records</option>
           {ENTITY_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t[0]!.toUpperCase() + t.slice(1)}
+            <option key={t.value} value={t.value}>
+              {t.label}
             </option>
           ))}
         </select>
