@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { getDummyHash, hashPassword, verifyPassword } from "../../auth/password";
 import { loginLimiter, signupLimiter } from "../../auth/rateLimit";
-import { createSession, revokeSession } from "../../auth/session";
+import { createSession, revokeOtherSessions, revokeSession } from "../../auth/session";
 import type { Database } from "../../db/client";
 import { memberships, organizations, users } from "../../db/schema";
 import { audit } from "../../lib/audit";
@@ -79,6 +79,62 @@ export async function login(db: Database, input: { email: string; password: stri
 
 export async function logout(db: Database, sessionId: string) {
   await revokeSession(db, sessionId);
+}
+
+/** Change password after re-verifying the current one; every other session is signed out. */
+export async function changePassword(
+  db: Database,
+  auth: { userId: string; sessionId: string },
+  input: { currentPassword: string; newPassword: string },
+  meta: RequestMeta,
+) {
+  await loginLimiter.consume(`user:${auth.userId}`, db);
+  const [user] = await db
+    .select({ passwordHash: users.passwordHash })
+    .from(users)
+    .where(eq(users.id, auth.userId));
+  if (!user || !(await verifyPassword(input.currentPassword, user.passwordHash))) {
+    throw new AppError("BAD_REQUEST", "Your current password is incorrect.");
+  }
+  if (input.currentPassword === input.newPassword) {
+    throw new AppError("BAD_REQUEST", "Choose a password different from your current one.");
+  }
+  const passwordHash = await hashPassword(input.newPassword);
+  const signedOut = await db.transaction(async (tx) => {
+    await tx.update(users).set({ passwordHash }).where(eq(users.id, auth.userId));
+    await audit(
+      tx,
+      { userId: auth.userId, orgId: null, ip: meta.ip },
+      {
+        action: "user.password_changed",
+        entityType: "user",
+        entityId: auth.userId,
+        summary: "Changed password",
+      },
+    );
+    return revokeOtherSessions(tx, auth.userId, auth.sessionId);
+  });
+  return { ok: true as const, otherSessionsSignedOut: signedOut };
+}
+
+/** "Sign out other devices". */
+export async function signOutOtherSessions(
+  db: Database,
+  auth: { userId: string; sessionId: string },
+  meta: RequestMeta,
+) {
+  const signedOut = await revokeOtherSessions(db, auth.userId, auth.sessionId);
+  await audit(
+    db,
+    { userId: auth.userId, orgId: null, ip: meta.ip },
+    {
+      action: "user.sessions_revoked",
+      entityType: "user",
+      entityId: auth.userId,
+      summary: `Signed out ${signedOut} other session(s)`,
+    },
+  );
+  return { ok: true as const, otherSessionsSignedOut: signedOut };
 }
 
 export async function listMyOrganizations(db: Database, userId: string) {

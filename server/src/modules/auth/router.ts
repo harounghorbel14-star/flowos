@@ -37,6 +37,23 @@ export const authRouter = router({
       return { user };
     }),
 
+  changePassword: authedProcedure
+    .input(z.object({ currentPassword: z.string().max(200), newPassword: password }))
+    .mutation(({ ctx, input }) =>
+      service.changePassword(ctx.db, { userId: ctx.auth.user.id, sessionId: ctx.auth.sessionId }, input, {
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+      }),
+    ),
+
+  signOutOtherSessions: authedProcedure.mutation(({ ctx }) =>
+    service.signOutOtherSessions(
+      ctx.db,
+      { userId: ctx.auth.user.id, sessionId: ctx.auth.sessionId },
+      { ip: ctx.ip, userAgent: ctx.userAgent },
+    ),
+  ),
+
   logout: authedProcedure.mutation(async ({ ctx }) => {
     await service.logout(ctx.db, ctx.auth.sessionId);
     ctx.clearSessionCookie();

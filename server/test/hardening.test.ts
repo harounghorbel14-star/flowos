@@ -1,6 +1,9 @@
+import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createSession, SESSION_MAX_AGE_MS, validateSession } from "../src/auth/session";
+import { sessions } from "../src/db/schema";
 import { logSafeError } from "../src/lib/logging";
-import { addMember, createOrg } from "./helpers";
+import { addMember, anonCaller, callerFor, createOrg, createUser, db, resetLimiters } from "./helpers";
 
 /** Regression tests for defects found in the stabilization audit. */
 
@@ -95,5 +98,75 @@ describe("error logging", () => {
 
   it("keeps message and stack for application errors", () => {
     expect(logSafeError(new TypeError("x is undefined"))).toContain("TypeError: x is undefined");
+  });
+});
+
+describe("account security", () => {
+  it("changing the password needs the current one and signs out every other session", async () => {
+    const user = await createUser();
+    await resetLimiters();
+    const meta = { ip: null, userAgent: null };
+    const other = await createSession(db(), user.id, meta);
+    const current = await createSession(db(), user.id, meta);
+    const currentId = (await validateSession(db(), current.token))!.sessionId;
+
+    const { changePassword } = await import("../src/modules/auth/service");
+    await expect(
+      changePassword(
+        db(),
+        { userId: user.id, sessionId: currentId },
+        { currentPassword: "wrong-pass-1", newPassword: "brand-new-pass-9" },
+        meta,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+    const res = await changePassword(
+      db(),
+      { userId: user.id, sessionId: currentId },
+      { currentPassword: "correct-horse-42", newPassword: "brand-new-pass-9" },
+      meta,
+    );
+    expect(res.otherSessionsSignedOut).toBeGreaterThanOrEqual(2); // the signup session and `other`
+    expect(await validateSession(db(), other.token)).toBeNull();
+    expect(await validateSession(db(), current.token)).not.toBeNull();
+
+    await resetLimiters();
+    await expect(
+      anonCaller({ ip: "10.9.9.9" }).auth.login({ email: user.email, password: "correct-horse-42" }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("the API rejects a weak new password", async () => {
+    const user = await createUser();
+    await expect(
+      callerFor(user).auth.changePassword({ currentPassword: "correct-horse-42", newPassword: "short" }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("sessions expire 90 days after sign-in even when used every day", async () => {
+    const user = await createUser();
+    const s = await createSession(db(), user.id, { ip: null, userAgent: null });
+    const id = (await validateSession(db(), s.token))!.sessionId;
+    await db()
+      .update(sessions)
+      .set({
+        createdAt: new Date(Date.now() - SESSION_MAX_AGE_MS - 1000),
+        expiresAt: new Date(Date.now() + 86_400_000),
+      })
+      .where(eq(sessions.id, id));
+    expect(await validateSession(db(), s.token)).toBeNull();
+  });
+
+  it("renewal never extends a session past the 90-day limit", async () => {
+    const user = await createUser();
+    const s = await createSession(db(), user.id, { ip: null, userAgent: null });
+    const id = (await validateSession(db(), s.token))!.sessionId;
+    const createdAt = new Date(Date.now() - SESSION_MAX_AGE_MS + 5 * 86_400_000); // 5 days left
+    await db()
+      .update(sessions)
+      .set({ createdAt, expiresAt: new Date(Date.now() + 86_400_000) })
+      .where(eq(sessions.id, id));
+    const renewed = await validateSession(db(), s.token);
+    expect(renewed!.expiresAt.getTime()).toBeLessThanOrEqual(createdAt.getTime() + SESSION_MAX_AGE_MS);
   });
 });

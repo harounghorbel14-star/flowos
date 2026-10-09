@@ -1,5 +1,5 @@
-import { eq, lt } from "drizzle-orm";
-import type { Database } from "../db/client";
+import { and, eq, lt, ne } from "drizzle-orm";
+import type { Database, Tx } from "../db/client";
 import { sessions, users } from "../db/schema";
 import { generateToken, hashToken } from "../lib/tokens";
 
@@ -7,6 +7,8 @@ export const SESSION_COOKIE = "flowos_session";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const RENEW_WHEN_REMAINING_MS = 15 * 24 * 60 * 60 * 1000;
 const TOUCH_INTERVAL_MS = 60 * 60 * 1000;
+/** Sliding renewal never extends a session beyond this age: sign in again after 90 days. */
+export const SESSION_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
 export interface SessionUser {
   id: string;
@@ -49,6 +51,7 @@ export async function validateSession(
       sessionId: sessions.id,
       expiresAt: sessions.expiresAt,
       lastSeenAt: sessions.lastSeenAt,
+      createdAt: sessions.createdAt,
       user: { id: users.id, email: users.email, name: users.name },
     })
     .from(sessions)
@@ -58,14 +61,15 @@ export async function validateSession(
   if (!row) return null;
 
   const now = Date.now();
-  if (row.expiresAt.getTime() <= now) {
+  const hardLimit = row.createdAt.getTime() + SESSION_MAX_AGE_MS;
+  if (row.expiresAt.getTime() <= now || hardLimit <= now) {
     await db.delete(sessions).where(eq(sessions.id, sessionId));
     return null;
   }
 
   let expiresAt = row.expiresAt;
-  if (expiresAt.getTime() - now < RENEW_WHEN_REMAINING_MS) {
-    expiresAt = new Date(now + SESSION_TTL_MS);
+  if (expiresAt.getTime() - now < RENEW_WHEN_REMAINING_MS && expiresAt.getTime() < hardLimit) {
+    expiresAt = new Date(Math.min(now + SESSION_TTL_MS, hardLimit));
     await db.update(sessions).set({ expiresAt, lastSeenAt: new Date() }).where(eq(sessions.id, sessionId));
   } else if (now - row.lastSeenAt.getTime() > TOUCH_INTERVAL_MS) {
     await db.update(sessions).set({ lastSeenAt: new Date() }).where(eq(sessions.id, sessionId));
@@ -75,6 +79,18 @@ export async function validateSession(
 
 export async function revokeSession(db: Database, sessionId: string): Promise<void> {
   await db.delete(sessions).where(eq(sessions.id, sessionId));
+}
+
+/** Sign the user out everywhere except the given session (password change, "sign out other devices"). */
+export async function revokeOtherSessions(
+  db: Tx,
+  userId: string,
+  keepSessionId: string,
+): Promise<number> {
+  const result = await db
+    .delete(sessions)
+    .where(and(eq(sessions.userId, userId), ne(sessions.id, keepSessionId)));
+  return result.rowCount ?? 0;
 }
 
 /** Delete expired sessions (they are already rejected on use). */
