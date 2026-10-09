@@ -1,13 +1,24 @@
-import { createServer, type Server } from "node:http";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { createServer as createHttpsServer, type Server } from "node:https";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { webhookUrlProblem } from "@shared/integrations";
+import { integrationLimiter } from "../src/modules/integrations/service";
 import { integrationConnections, workflowRuns } from "../src/db/schema";
 import { decryptSecret, encryptSecret } from "../src/lib/crypto";
 import { setBillingConfigForTests } from "../src/modules/billing/gateway";
-import { DeliveryError, postJson, setTransportForTests } from "../src/modules/integrations/transport";
+import {
+  allowPrivateAddressesForTests,
+  DeliveryError,
+  isPrivateAddress,
+  postJson,
+  setTransportForTests,
+} from "../src/modules/integrations/transport";
 import { runWorkerOnce } from "../src/modules/workflows/engine";
 import { addMember, createOrg, db } from "./helpers";
 
@@ -24,7 +35,8 @@ function useRecorder() {
     sent.push({ url, body });
   });
 }
-afterEach(() => {
+afterEach(async () => {
+  await integrationLimiter.reset();
   setTransportForTests(undefined);
   setBillingConfigForTests(undefined);
 });
@@ -156,6 +168,19 @@ describe("connections", () => {
   });
 });
 
+describe("rate limiting", () => {
+  it("limits connect and test-message calls per organization", async () => {
+    useRecorder();
+    const { owner, as } = await createOrg();
+    await as(owner).integrations.connect({ provider: "slack", webhookUrl: SLACK_URL });
+    for (let i = 0; i < 9; i++) await as(owner).integrations.test({ provider: "slack" });
+    await expect(as(owner).integrations.test({ provider: "slack" })).rejects.toMatchObject({
+      code: "TOO_MANY_REQUESTS",
+    });
+    expect(sent).toHaveLength(9);
+  });
+});
+
 describe("workflow action: send_message", () => {
   const messageWorkflow = (text: string) => ({
     name: `Announce ${randomUUID().slice(0, 4)}`,
@@ -209,21 +234,76 @@ describe("workflow action: send_message", () => {
 describe("HTTP transport", () => {
   let server: Server;
   let base: string;
+  let ca: Buffer;
   const status = { code: 200 };
   beforeAll(async () => {
-    server = createServer((req, res) => {
+    // Self-signed certificate for a local HTTPS endpoint (test only).
+    const dir = mkdtempSync(path.join(tmpdir(), "flowos-tls-"));
+    execFileSync(
+      "openssl",
+      [
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-days",
+        "1",
+        "-subj",
+        "/CN=localhost",
+        "-addext",
+        "subjectAltName=DNS:localhost",
+        "-keyout",
+        path.join(dir, "key.pem"),
+        "-out",
+        path.join(dir, "cert.pem"),
+      ],
+      { stdio: "ignore" },
+    );
+    ca = readFileSync(path.join(dir, "cert.pem"));
+    server = createHttpsServer({ key: readFileSync(path.join(dir, "key.pem")), cert: ca }, (req, res) => {
       if (req.url === "/redirect") {
-        res.writeHead(302, { location: "http://169.254.169.254/" }).end();
+        res.writeHead(302, { location: "https://169.254.169.254/" }).end();
         return;
       }
       res.writeHead(status.code).end("echo of the request would go here");
     }).listen(0);
     await new Promise((r) => server.once("listening", r));
-    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    base = `https://localhost:${(server.address() as AddressInfo).port}`;
   });
-  afterAll(() => new Promise<void>((r) => server.close(() => r())));
+  afterAll(() => {
+    allowPrivateAddressesForTests(false);
+    return new Promise<void>((r) => server.close(() => r()));
+  });
+
+  it("refuses hosts that resolve to private addresses, and IP-literal hosts", async () => {
+    allowPrivateAddressesForTests(false);
+    await expect(postJson(`${base}/ok`, {})).rejects.toMatchObject({
+      retryable: false,
+      message: expect.stringContaining("private address"),
+    });
+    await expect(postJson("https://169.254.169.254/latest", {})).rejects.toMatchObject({ retryable: false });
+    await expect(postJson("http://hooks.slack.com/x", {})).rejects.toMatchObject({ retryable: false });
+    for (const ip of [
+      "127.0.0.1",
+      "10.1.2.3",
+      "172.16.0.1",
+      "192.168.1.1",
+      "169.254.169.254",
+      "100.64.0.1",
+      "::1",
+      "fe80::1",
+      "fd00::1",
+      "::ffff:127.0.0.1",
+      "0.0.0.0",
+    ]) {
+      expect(isPrivateAddress(ip)).toBe(true);
+    }
+    for (const ip of ["52.1.2.3", "2606:4700::1111"]) expect(isPrivateAddress(ip)).toBe(false);
+  });
 
   it("classifies responses and never follows redirects", async () => {
+    allowPrivateAddressesForTests(true, ca);
     status.code = 200;
     await expect(postJson(`${base}/ok`, { text: "x" })).resolves.toBeUndefined();
     status.code = 404;
@@ -234,6 +314,9 @@ describe("HTTP transport", () => {
     const err = await postJson(`${base}/bad`, {}).catch((e: unknown) => e as DeliveryError);
     expect(err).toMatchObject({ retryable: false });
     expect((err as Error).message).not.toContain("echo");
-    await expect(postJson(`${base}/redirect`, {})).rejects.toBeInstanceOf(DeliveryError);
+    await expect(postJson(`${base}/redirect`, {})).rejects.toMatchObject({
+      retryable: false,
+      message: expect.stringContaining("redirect"),
+    });
   });
 });

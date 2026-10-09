@@ -85,7 +85,7 @@ function subscriptionEvent(
     created: opts.created ?? Math.floor(Date.now() / 1000),
     data: {
       object: {
-        id: opts.subId ?? "sub_test_1",
+        id: opts.subId ?? `sub_for_${customer}`,
         object: "subscription",
         customer,
         status: opts.status ?? "active",
@@ -312,5 +312,57 @@ describe("Stripe webhooks", () => {
     expect(await (await deliver(forged)).json()).toMatchObject({ outcome: "ignored" });
     expect(await db().select().from(subscriptions).where(eq(subscriptions.orgId, b.org.id))).toHaveLength(0);
     expect((await b.as(b.owner).billing.status()).plan).toBe("FREE");
+  });
+
+  it("failed payments notify owners; past_due keeps access, unpaid and incomplete fall back to Free", async () => {
+    const { owner, org, as, customer } = await orgWithCustomer();
+    const admin = await addMember(org.id, owner, "ADMIN");
+    const now = Math.floor(Date.now() / 1000);
+    await deliver(subscriptionEvent("customer.subscription.created", customer, { created: now - 30 }));
+
+    const failed = {
+      id: `evt_inv_${Date.now()}`,
+      object: "event",
+      type: "invoice.payment_failed",
+      created: now - 20,
+      data: { object: { id: "in_1", object: "invoice", customer, attempt_count: 1 } },
+    };
+    expect(await (await deliver(failed)).json()).toMatchObject({ outcome: "applied" });
+    const ownerInbox = await as(owner).notifications.list({});
+    expect(ownerInbox.items.some((n) => n.type === "BILLING_ISSUE")).toBe(true);
+    // Only owners are told about billing.
+    expect((await as(admin).notifications.list({})).items.some((n) => n.type === "BILLING_ISSUE")).toBe(
+      false,
+    );
+
+    await deliver(
+      subscriptionEvent("customer.subscription.updated", customer, { status: "past_due", created: now - 10 }),
+    );
+    expect(await as(owner).billing.status()).toMatchObject({
+      plan: "TEAM",
+      subscription: { status: "past_due" },
+    });
+    await deliver(
+      subscriptionEvent("customer.subscription.updated", customer, { status: "unpaid", created: now - 5 }),
+    );
+    expect(await as(owner).billing.status()).toMatchObject({
+      plan: "FREE",
+      subscription: { status: "unpaid" },
+    });
+    await deliver(
+      subscriptionEvent("customer.subscription.updated", customer, { status: "incomplete", created: now }),
+    );
+    expect((await as(owner).billing.status()).plan).toBe("FREE");
+  });
+
+  it("a failed-payment event for an unknown customer changes nothing", async () => {
+    const r = await deliver({
+      id: `evt_inv_unknown_${Date.now()}`,
+      object: "event",
+      type: "invoice.payment_failed",
+      created: Math.floor(Date.now() / 1000),
+      data: { object: { id: "in_2", object: "invoice", customer: "cus_nobody", attempt_count: 1 } },
+    });
+    expect(await r.json()).toMatchObject({ outcome: "ignored" });
   });
 });

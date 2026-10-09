@@ -14,6 +14,10 @@ import { decryptSecret, encryptionConfigured, encryptSecret } from "../../lib/cr
 import { badRequest, notFound } from "../../lib/errors";
 import { assertFeature, getEntitlements } from "../billing/entitlements";
 import { DeliveryError, getTransport } from "./transport";
+import { RateLimiter } from "../../auth/rateLimit";
+
+/** Connect and test-message calls per organization per minute (each can make an outbound request). */
+export const integrationLimiter = new RateLimiter("integration", 10, 60_000);
 
 const isMessaging = (id: string): id is MessagingIntegrationId =>
   (MESSAGING_INTEGRATIONS as readonly string[]).includes(id);
@@ -91,6 +95,7 @@ export async function connectIntegration(
   assertCan(actor, "integration:manage");
   assertConnectable(input.provider);
   await assertFeature(db, actor.orgId, "integrations");
+  await integrationLimiter.consume(`org:${actor.orgId}`, db);
   const url = input.webhookUrl.trim();
   const problem = webhookUrlProblem(input.provider, url);
   if (problem) throw badRequest(problem);
@@ -179,6 +184,7 @@ export async function sendTestMessage(db: Database, actor: Actor, provider: stri
   assertCan(actor, "integration:manage");
   assertConnectable(provider);
   await assertFeature(db, actor.orgId, "integrations");
+  await integrationLimiter.consume(`org:${actor.orgId}`, db);
   try {
     await sendMessage(db, actor.orgId, provider, "FLOWOS test message: this channel is connected.");
   } catch (err) {

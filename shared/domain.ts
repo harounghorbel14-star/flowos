@@ -57,6 +57,7 @@ export const NOTIFICATION_TYPES = [
   "WORKFLOW_FAILED",
   "WORKFLOW_COMPLETED",
   "DOCUMENT_EXPIRING",
+  "BILLING_ISSUE",
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 

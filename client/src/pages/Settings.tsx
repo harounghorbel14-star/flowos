@@ -701,8 +701,8 @@ export function BillingPage() {
       <SettingsTabs />
       {result === "success" ? (
         <div className="callout" role="status">
-          Checkout completed. Your plan updates as soon as Stripe confirms the subscription, usually within a
-          minute.
+          You returned from Stripe Checkout. The plan below changes only when Stripe confirms the payment to
+          FLOWOS, usually within a minute; reload to check.
         </div>
       ) : result === "cancelled" ? (
         <div className="callout" role="status">

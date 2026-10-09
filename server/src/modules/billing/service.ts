@@ -2,7 +2,15 @@ import { and, eq, lte, ne, or } from "drizzle-orm";
 import type Stripe from "stripe";
 import { PLANS, type PlanId } from "@shared/billing";
 import type { Database, Tx } from "../../db/client";
-import { billingCustomers, organizations, subscriptions, users, webhookEvents } from "../../db/schema";
+import {
+  billingCustomers,
+  memberships,
+  organizations,
+  subscriptions,
+  users,
+  webhookEvents,
+} from "../../db/schema";
+import { notify } from "../notifications/service";
 import { env } from "../../env";
 import { assertCan, can, type Actor } from "../../lib/actor";
 import { audit } from "../../lib/audit";
@@ -148,6 +156,39 @@ export async function handleStripeEvent(db: Database, event: Stripe.Event): Prom
       if (customerId && claimed && (await orgForCustomer(tx, customerId)) === claimed) {
         orgId = claimed;
         outcome = "applied";
+      }
+    } else if (event.type === "invoice.payment_failed") {
+      const invoice = event.data.object;
+      const customerId = customerIdOf(invoice.customer as string | { id: string } | null);
+      orgId = await orgForCustomer(tx, customerId);
+      if (orgId) {
+        outcome = "applied";
+        const owners = await tx
+          .select({ userId: memberships.userId })
+          .from(memberships)
+          .where(and(eq(memberships.orgId, orgId), eq(memberships.role, "OWNER")));
+        for (const o of owners) {
+          await notify(tx, {
+            orgId,
+            userId: o.userId,
+            actorUserId: null,
+            type: "BILLING_ISSUE",
+            title: "A subscription payment failed",
+            body: "Stripe will retry the payment. Update the payment method under Settings → Billing → Manage billing.",
+            link: "/settings/billing",
+          });
+        }
+        await audit(
+          tx,
+          { userId: null, orgId },
+          {
+            action: "billing.payment_failed",
+            entityType: "organization",
+            entityId: orgId,
+            summary: "A subscription payment failed",
+            metadata: { stripeEventId: event.id, attempt: invoice.attempt_count },
+          },
+        );
       }
     } else if (
       event.type === "customer.subscription.created" ||
