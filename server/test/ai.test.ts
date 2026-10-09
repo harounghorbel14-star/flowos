@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { aiActions, aiConversations, aiMessages, aiUsage, tasks } from "../src/db/schema";
-import { aiLimiter, runTurn, SYSTEM_PROMPT, type TurnEvent } from "../src/modules/ai/assistant";
+import { aiLimiter, fitHistory, runTurn, SYSTEM_PROMPT, type TurnEvent } from "../src/modules/ai/assistant";
 import {
   setAiProvider,
   type AiMessage,
@@ -514,5 +514,38 @@ describe("AI assistant", () => {
     expect(provider.requests).toHaveLength(1);
     const [conv] = await db().select().from(aiConversations).where(eq(aiConversations.id, c.id));
     expect(conv!.lockedUntil).toBeNull();
+  });
+
+  it("drops the oldest whole exchanges when the history outgrows the budget", () => {
+    const user = (t: string) => ({ role: "user" as const, content: [{ type: "text" as const, text: t }] });
+    const asst = (t: string) => ({
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text: t }],
+    });
+    const toolUse = {
+      role: "assistant" as const,
+      content: [{ type: "tool_use", id: "t1", name: "x", input: {} }],
+    };
+    const toolResult = {
+      role: "user" as const,
+      content: [{ type: "tool_result", tool_use_id: "t1", content: "r" }],
+    };
+    const big = "x".repeat(1000);
+    const history = [
+      user(big),
+      asst(big),
+      user(big),
+      toolUse,
+      toolResult,
+      asst(big),
+      user("latest"),
+    ] as never[];
+    expect(fitHistory(history, 100_000)).toHaveLength(7);
+    const fitted = fitHistory(history, 1500);
+    // Cut at an exchange start, never between a tool_use and its tool_result.
+    expect(fitted[0]).toEqual(user("latest"));
+    const mid = fitHistory(history, 2400);
+    expect(mid[0]).toEqual(user(big));
+    expect(mid).toHaveLength(5);
   });
 });

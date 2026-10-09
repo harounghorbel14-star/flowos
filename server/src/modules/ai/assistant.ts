@@ -324,6 +324,33 @@ async function takeActionUpdates(db: Database, actor: Actor, conversationId: str
 
 // ─── The turn loop ───────────────────────────────────────────────────────────
 
+/** Rough size budget for the history sent per request (~150k tokens at ~4 chars/token). */
+export const HISTORY_CHAR_BUDGET = 600_000;
+
+/**
+ * Keep the request within the model's context window by dropping the oldest
+ * whole exchanges. A cut only happens at the start of an exchange (a user
+ * message with no tool results), so tool_use/tool_result pairs and their
+ * thinking blocks stay intact. The current exchange is always kept.
+ */
+export function fitHistory(messages: AiMessageParam[], budget = HISTORY_CHAR_BUDGET): AiMessageParam[] {
+  const sizes = messages.map((m) => JSON.stringify(m.content).length);
+  let total = sizes.reduce((a, b) => a + b, 0);
+  if (total <= budget) return messages;
+  const isExchangeStart = (m: AiMessageParam) =>
+    m.role === "user" &&
+    !(Array.isArray(m.content) && m.content.some((b) => (b as { type?: string }).type === "tool_result"));
+  const starts = messages.flatMap((m, i) => (isExchangeStart(m) ? [i] : []));
+  let from = 0;
+  for (const start of starts) {
+    if (start === 0) continue;
+    if (total <= budget) break;
+    total -= sizes.slice(from, start).reduce((a, b) => a + b, 0);
+    from = start;
+  }
+  return messages.slice(from);
+}
+
 /**
  * One turn at a time per conversation. The lock's expiry timestamp doubles as
  * its token: renewals and the release only apply while it is still ours, so a
@@ -522,7 +549,9 @@ export async function runTurn(
         .from(aiMessages)
         .where(eq(aiMessages.conversationId, conversationId))
         .orderBy(asc(aiMessages.id));
-      const messages = history.map((m) => ({ role: m.role, content: m.content }) as AiMessageParam);
+      const messages = fitHistory(
+        history.map((m) => ({ role: m.role, content: m.content }) as AiMessageParam),
+      );
 
       const started = Date.now();
       let response: AiMessage;
