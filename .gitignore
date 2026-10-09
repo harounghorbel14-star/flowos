@@ -6,3 +6,4 @@ coverage
 !.env.example
 storage/
 *.log
+e2e/.artifacts

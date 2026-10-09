@@ -23,7 +23,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=.env server/src/db/migrate.ts",
     "db:seed": "tsx --env-file-if-exists=.env server/src/db/seed.ts",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build"
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build",
+    "test:e2e": "node e2e/smoke.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.1",
@@ -57,6 +58,7 @@
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.13.0",
+    "playwright": "^1.56.1",
     "prettier": "^3.9.9",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",

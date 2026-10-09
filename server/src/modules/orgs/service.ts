@@ -1,5 +1,5 @@
 import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
-import type { Role } from "@shared/domain";
+import { label, type Role } from "@shared/domain";
 import { ROLE_RANK } from "@shared/permissions";
 import type { Database, Tx } from "../../db/client";
 import { employees, invitations, memberships, organizations, users } from "../../db/schema";
@@ -193,7 +193,7 @@ export async function changeRole(db: Database, actor: Actor, input: { membership
       action: "member.role_changed",
       entityType: "membership",
       entityId: target.id,
-      summary: `Changed ${target.name}'s role from ${target.role} to ${input.role}`,
+      summary: `Changed ${target.name}'s role from ${label(target.role)} to ${label(input.role)}`,
       metadata: { userId: target.userId, from: target.role, to: input.role },
     });
     return { ok: true };
@@ -290,7 +290,7 @@ export async function createInvitation(db: Database, actor: Actor, input: { emai
       action: "invitation.created",
       entityType: "invitation",
       entityId: invite!.id,
-      summary: `Invited ${email} as ${input.role}`,
+      summary: `Invited ${email} as ${label(input.role)}`,
     });
     // The raw token is returned exactly once so the inviter can share the link.
     return { ...invite!, token };
@@ -418,7 +418,7 @@ export async function acceptInvitation(
       action: "invitation.accepted",
       entityType: "invitation",
       entityId: invite.id,
-      summary: `${user.name} joined as ${invite.role}`,
+      summary: `${user.name} joined as ${label(invite.role)}`,
     });
 
     // Link to an existing, unlinked directory entry with the same email, if any.

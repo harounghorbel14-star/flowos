@@ -1,6 +1,6 @@
 import { and, asc, count, desc, eq, ilike, ne, or, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import type { EmployeeStatus, EmploymentType } from "@shared/domain";
+import { label, type EmployeeStatus, type EmploymentType } from "@shared/domain";
 import type { Database, Tx } from "../../db/client";
 import { departments, employees, tasks, users } from "../../db/schema";
 import { assertCan, type Actor } from "../../lib/actor";
@@ -264,7 +264,7 @@ export async function updateEmployee(db: Database, actor: Actor, id: string, inp
       entityType: "employee",
       entityId: id,
       summary: statusChanged
-        ? `Changed ${fullName(after!)}'s status to ${input.status}`
+        ? `Changed ${fullName(after!)}'s status to ${label(input.status)}`
         : `Updated ${fullName(after!)}'s profile`,
       metadata: diff(before, patch),
     });

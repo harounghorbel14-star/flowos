@@ -87,6 +87,7 @@ export async function listMyOrganizations(db: Database, userId: string) {
       id: organizations.id,
       name: organizations.name,
       slug: organizations.slug,
+      taskPrefix: organizations.taskPrefix,
       role: memberships.role,
     })
     .from(memberships)

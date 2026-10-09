@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, ilike, inArray, lt, ne, or, sql, type SQL } from "drizzle-orm";
-import type { TaskPriority, TaskStatus } from "@shared/domain";
+import { label, type TaskPriority, type TaskStatus } from "@shared/domain";
 import type { Database, Tx } from "../../db/client";
 import { employees, organizations, projects, taskComments, tasks, users } from "../../db/schema";
 import { assertCan, can, type Actor } from "../../lib/actor";
@@ -283,7 +283,7 @@ export async function updateTask(db: Database, actor: Actor, id: string, input: 
       entityType: "task",
       entityId: id,
       summary: statusChanged
-        ? `Moved “${after!.title}” from ${before.status} to ${input.status}`
+        ? `Moved “${after!.title}” from ${label(before.status)} to ${label(input.status)}`
         : reassigned
           ? assignee
             ? `Assigned “${after!.title}” to ${fullName(assignee)}`

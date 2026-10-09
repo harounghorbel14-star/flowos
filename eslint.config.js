@@ -12,11 +12,16 @@ export default tseslint.config(
     rules: {
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
       "@typescript-eslint/consistent-type-imports": "error",
-      "no-restricted-imports": [
+      // Client code may only import server *types* (the tRPC router signature).
+      "@typescript-eslint/no-restricted-imports": [
         "error",
         {
           patterns: [
-            { group: ["**/server/**", "@server/*"], message: "Client code must not import server code." },
+            {
+              group: ["**/server/**", "@server/*"],
+              message: "Client code must not import server code.",
+              allowTypeImports: true,
+            },
           ],
         },
       ],
@@ -32,6 +37,6 @@ export default tseslint.config(
   },
   {
     files: ["server/**/*.ts", "shared/**/*.ts", "*.config.ts"],
-    rules: { "no-restricted-imports": "off" },
+    rules: { "@typescript-eslint/no-restricted-imports": "off" },
   },
 );

@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
-import type { ProjectStatus } from "@shared/domain";
+import { label, type ProjectStatus } from "@shared/domain";
 import type { Database, Tx } from "../../db/client";
 import { employees, projectMembers, projects, tasks } from "../../db/schema";
 import { assertCan, type Actor } from "../../lib/actor";
@@ -292,7 +292,9 @@ export async function updateProject(
       action: statusChanged ? "project.status_changed" : "project.updated",
       entityType: "project",
       entityId: id,
-      summary: statusChanged ? `Moved ${after!.name} to ${fields.status}` : `Updated project ${after!.name}`,
+      summary: statusChanged
+        ? `Moved ${after!.name} to ${label(fields.status)}`
+        : `Updated project ${after!.name}`,
       metadata: { ...diff(before, fields), ...(memberIds ? { memberIds } : {}) },
     });
     return after!;
