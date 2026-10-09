@@ -197,14 +197,17 @@ trialing or past_due) and applies operator feature flags; `assertWithinLimit`
 and `assertFeature` are called by the services that create members,
 workflows, documents and assistant turns. Stripe access goes through a small
 `BillingGateway` interface (checkout, portal, customer, webhook
-verification). Webhooks: raw body → signature check → `handleStripeEvent`,
-which records the event id and applies its effect in one transaction.
+verification, subscription retrieval). Webhooks: raw body → signature check
+→ `handleStripeEvent`, which records the event id and applies its effect in
+one transaction; for subscription events the effect is the subscription's
+current state read back from Stripe, so delivery order does not matter.
 
 ## Integrations
 
 `modules/integrations`: a catalog of providers (available or planned),
-encrypted connection secrets (`lib/crypto.ts`), and a `Transport` that posts
-JSON without following redirects. The workflow action `send_message`
+encrypted connection secrets (`lib/crypto.ts`, bound to org and provider),
+and a `Transport` that resolves the host once, refuses non-public addresses,
+pins the connection to the checked address and never follows redirects. The workflow action `send_message`
 delivers through it, mapping 4xx to permanent and 429/5xx/network errors to
 retryable failures. OAuth providers have an interface
 (`providers.ts`) and no implementation.

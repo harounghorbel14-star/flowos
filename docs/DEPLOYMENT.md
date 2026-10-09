@@ -123,10 +123,13 @@ organization in tool results or answers.
 ## Billing (Stripe)
 
 1. In Stripe (test mode first), create a Product with a recurring Price for each paid plan and note the Price ids.
-2. Add a webhook endpoint `https://<APP_ORIGIN>/api/billing/stripe/webhook` listening to `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`; copy its signing secret.
+2. Add a webhook endpoint `https://<APP_ORIGIN>/api/billing/stripe/webhook` listening to `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`; copy its signing secret. Each subscription event makes FLOWOS read the subscription back from Stripe, so the secret key needs read access to subscriptions.
 3. Set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_TEAM`/`STRIPE_PRICE_BUSINESS`, run `npm run db:migrate`, restart.
 4. Verify: as an owner, Settings → Billing → choose a plan, pay with a Stripe test card, and check the plan changes after the webhook arrives (Stripe dashboard → webhook deliveries should show 200).
-5. Enable the Customer Portal in Stripe settings for "Manage billing".
+5. Enable the Customer Portal in Stripe settings for "Manage billing", and in Checkout settings enable "Limit customers to one subscription" (FLOWOS also refuses a checkout when Stripe reports an open subscription, and alerts owners if two ever become active).
+6. Changing a price: set `STRIPE_PRICE_TEAM="price_new,price_old"` — the first is used for new checkouts, the others still map existing subscribers.
+
+Use test mode (`sk_test_…`) and Stripe test cards for verification; FLOWOS never charges outside Stripe Checkout.
 
 Feature flags (operator only): `npm run flags -- set <orgId> assistant on "beta"`, `list`, `clear`.
 
@@ -153,6 +156,8 @@ A leaked key (including the one committed in `76ad080`, see SECURITY.md) must be
 - [ ] Run `npm run db:migrate` as a release step, not at boot, when running multiple instances.
 - [ ] Configure log shipping (the server logs to stdout/stderr).
 - [ ] Review [SECURITY.md](SECURITY.md) "Known gaps".
+
+**CI:** both jobs start the PostgreSQL 16 preinstalled on GitHub's Ubuntu runner (no container image pull; Docker Hub's anonymous rate limit made pulls fail).
 
 **Not verified:** no real deployment exists. Everything above was verified locally and in CI (production build started with `node`, fresh database), not on a hosting platform.
 
