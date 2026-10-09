@@ -82,11 +82,7 @@ export async function revokeSession(db: Database, sessionId: string): Promise<vo
 }
 
 /** Sign the user out everywhere except the given session (password change, "sign out other devices"). */
-export async function revokeOtherSessions(
-  db: Tx,
-  userId: string,
-  keepSessionId: string,
-): Promise<number> {
+export async function revokeOtherSessions(db: Tx, userId: string, keepSessionId: string): Promise<number> {
   const result = await db
     .delete(sessions)
     .where(and(eq(sessions.userId, userId), ne(sessions.id, keepSessionId)));

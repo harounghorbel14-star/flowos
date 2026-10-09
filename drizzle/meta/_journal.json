@@ -64,6 +64,13 @@
       "when": 1791546347042,
       "tag": "0008_rate_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791564941782,
+      "tag": "0009_stabilization_indexes",
+      "breakpoints": true
     }
   ]
 }

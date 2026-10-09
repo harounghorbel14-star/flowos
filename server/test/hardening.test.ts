@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSession, SESSION_MAX_AGE_MS, validateSession } from "../src/auth/session";
 import { sessions } from "../src/db/schema";
@@ -168,5 +168,38 @@ describe("account security", () => {
       .where(eq(sessions.id, id));
     const renewed = await validateSession(db(), s.token);
     expect(renewed!.expiresAt.getTime()).toBeLessThanOrEqual(createdAt.getTime() + SESSION_MAX_AGE_MS);
+  });
+});
+
+describe("concurrency", () => {
+  it("concurrent opposite manager changes cannot create a reporting cycle", async () => {
+    const ctx = await createOrg();
+    const mk = (n: string) =>
+      ctx
+        .as(ctx.owner)
+        .employees.create({ firstName: n, lastName: "C", email: `${n}-${Date.now()}@example.test` });
+    const [a, b] = await Promise.all([mk("ana"), mk("ben")]);
+    for (let i = 0; i < 5; i++) {
+      await ctx.as(ctx.owner).employees.update({ id: a.id, managerId: null });
+      await ctx.as(ctx.owner).employees.update({ id: b.id, managerId: null });
+      const results = await Promise.allSettled([
+        ctx.as(ctx.owner).employees.update({ id: a.id, managerId: b.id }),
+        ctx.as(ctx.owner).employees.update({ id: b.id, managerId: a.id }),
+      ]);
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    }
+  });
+
+  it("concurrent invitations to one email leave exactly one open invitation", async () => {
+    const ctx = await createOrg();
+    const email = `dup-${Date.now()}@example.test`;
+    await Promise.allSettled(
+      Array.from({ length: 4 }, () => ctx.as(ctx.owner).orgs.invite({ email, role: "MEMBER" })),
+    );
+    const open = await db().execute(
+      sql`select count(*)::int as n from invitations
+           where org_id = ${ctx.org.id} and email = ${email} and accepted_at is null and revoked_at is null`,
+    );
+    expect(open.rows[0]).toEqual({ n: 1 });
   });
 });
