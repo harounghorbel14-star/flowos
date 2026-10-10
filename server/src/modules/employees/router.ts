@@ -3,8 +3,8 @@ import { EMPLOYEE_STATUSES, EMPLOYMENT_TYPES } from "@shared/domain";
 import { pageInput } from "../../lib/pagination";
 import { orgProcedure, router } from "../../trpc/trpc";
 import * as service from "./service";
+import { isoDate } from "../../lib/validation";
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.");
 const optionalText = (max: number) =>
   z
     .string()

@@ -7,7 +7,7 @@ import {
 } from "@shared/domain";
 import { personName } from "../../lib/format";
 import { useOrg } from "../../lib/session";
-import { errorMessage, fieldErrors, trpc } from "../../lib/trpc";
+import { fieldErrors, formError, trpc } from "../../lib/trpc";
 import { useToast } from "../toast";
 import { Button, enumOptions, Modal, SelectField, TextField } from "../ui";
 
@@ -27,6 +27,23 @@ export interface EmployeeFormValues {
   startDate: string;
   endDate: string;
 }
+
+/** Fields rendered with an inline error; any other field error shows at the top of the form. */
+const SHOWN = [
+  "firstName",
+  "lastName",
+  "email",
+  "jobTitle",
+  "phone",
+  "location",
+  "departmentId",
+  "managerId",
+  "userId",
+  "status",
+  "employmentType",
+  "startDate",
+  "endDate",
+];
 
 const EMPTY: EmployeeFormValues = {
   firstName: "",
@@ -86,6 +103,10 @@ function Inner({
   const update = trpc.employees.update.useMutation({ onSuccess: (e) => done(e.id) });
   const mutation = editing ? update : create;
   const errors = fieldErrors(mutation.error);
+  const topError = formError(
+    mutation.error,
+    can("member:read") ? SHOWN : SHOWN.filter((f) => f !== "userId"),
+  );
   const set =
     <K extends keyof EmployeeFormValues>(k: K) =>
     (e: { target: { value: string } }) =>
@@ -139,14 +160,13 @@ function Inner({
           submit();
         }}
       >
-        {mutation.error && Object.keys(errors).length === 0 ? (
-          <div className="form-error">{errorMessage(mutation.error)}</div>
-        ) : null}
+        {topError ? <div className="form-error">{topError}</div> : null}
         <div className="form-row">
           <TextField
             label="First name"
             required
             autoFocus
+            maxLength={80}
             value={v.firstName}
             onChange={set("firstName")}
             error={errors.firstName}
@@ -154,6 +174,7 @@ function Inner({
           <TextField
             label="Last name"
             required
+            maxLength={80}
             value={v.lastName}
             onChange={set("lastName")}
             error={errors.lastName}
@@ -164,11 +185,18 @@ function Inner({
             label="Work email"
             type="email"
             required
+            maxLength={254}
             value={v.email}
             onChange={set("email")}
             error={errors.email}
           />
-          <TextField label="Job title" value={v.jobTitle} onChange={set("jobTitle")} />
+          <TextField
+            label="Job title"
+            maxLength={120}
+            value={v.jobTitle}
+            onChange={set("jobTitle")}
+            error={errors.jobTitle}
+          />
         </div>
         <div className="form-row">
           <SelectField
@@ -176,6 +204,7 @@ function Inner({
             value={v.departmentId}
             onChange={set("departmentId")}
             placeholder="No department"
+            error={errors.departmentId}
             options={(departments.data ?? []).map((d) => ({ value: d.id, label: d.name }))}
           />
           <SelectField
@@ -183,6 +212,7 @@ function Inner({
             value={v.managerId}
             onChange={set("managerId")}
             placeholder="No manager"
+            error={errors.managerId}
             options={(managers.data ?? [])
               .filter((m) => m.id !== v.id)
               .map((m) => ({ value: m.id, label: personName(m.firstName, m.lastName) }))}
@@ -193,17 +223,25 @@ function Inner({
             label="Status"
             value={v.status}
             onChange={set("status")}
+            error={errors.status}
             options={enumOptions(EMPLOYEE_STATUSES)}
           />
           <SelectField
             label="Employment type"
             value={v.employmentType}
             onChange={set("employmentType")}
+            error={errors.employmentType}
             options={enumOptions(EMPLOYMENT_TYPES)}
           />
         </div>
         <div className="form-row">
-          <TextField label="Start date" type="date" value={v.startDate} onChange={set("startDate")} />
+          <TextField
+            label="Start date"
+            type="date"
+            value={v.startDate}
+            onChange={set("startDate")}
+            error={errors.startDate}
+          />
           <TextField
             label="End date"
             type="date"
@@ -213,8 +251,21 @@ function Inner({
           />
         </div>
         <div className="form-row">
-          <TextField label="Phone" value={v.phone} onChange={set("phone")} />
-          <TextField label="Location" value={v.location} onChange={set("location")} />
+          <TextField
+            label="Phone"
+            type="tel"
+            maxLength={40}
+            value={v.phone}
+            onChange={set("phone")}
+            error={errors.phone}
+          />
+          <TextField
+            label="Location"
+            maxLength={120}
+            value={v.location}
+            onChange={set("location")}
+            error={errors.location}
+          />
         </div>
         {can("member:read") ? (
           <SelectField
@@ -222,6 +273,7 @@ function Inner({
             value={v.userId}
             onChange={set("userId")}
             placeholder="Not linked"
+            error={errors.userId}
             help="Linking lets this person see work assigned to them. Invitations accepted with a matching email link automatically."
             options={linkable.map((m) => ({ value: m.userId, label: `${m.name} (${m.email})` }))}
           />

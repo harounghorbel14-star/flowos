@@ -18,7 +18,8 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/client"),
     emptyOutDir: true,
-    sourcemap: true,
+    // No public source maps in production builds.
+    sourcemap: false,
     rollupOptions: {
       output: {
         // Long-lived vendor chunks cache across app deploys.

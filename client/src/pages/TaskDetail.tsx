@@ -29,6 +29,7 @@ export function TaskDetailPage() {
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [comment, setComment] = useState("");
+  const [deletingComment, setDeletingComment] = useState<string | null>(null);
   const task = trpc.tasks.get.useQuery({ id });
 
   const refresh = () =>
@@ -50,7 +51,11 @@ export function TaskDetailPage() {
     onError: toast.error,
   });
   const deleteComment = trpc.tasks.deleteComment.useMutation({
-    onSuccess: () => utils.tasks.get.invalidate({ id }),
+    onSuccess: async () => {
+      await utils.tasks.get.invalidate({ id });
+      setDeletingComment(null);
+      toast.success("Comment deleted.");
+    },
     onError: toast.error,
   });
 
@@ -119,7 +124,7 @@ export function TaskDetailPage() {
                         variant="ghost"
                         icon
                         aria-label="Delete comment"
-                        onClick={() => deleteComment.mutate({ commentId: c.id })}
+                        onClick={() => setDeletingComment(c.id)}
                       >
                         <Trash2 aria-hidden />
                       </Button>
@@ -270,6 +275,16 @@ export function TaskDetailPage() {
           assigneeEmployeeId: t.assigneeEmployeeId ?? "",
           dueDate: t.dueDate ?? "",
         }}
+      />
+      <ConfirmDialog
+        open={deletingComment !== null}
+        onClose={() => setDeletingComment(null)}
+        title="Delete this comment?"
+        body="The comment is removed from the discussion for everyone. This cannot be undone."
+        confirmLabel="Delete comment"
+        danger
+        loading={deleteComment.isPending}
+        onConfirm={() => deletingComment && deleteComment.mutate({ commentId: deletingComment })}
       />
       <ConfirmDialog
         open={confirmDelete}

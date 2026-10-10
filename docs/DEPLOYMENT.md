@@ -50,17 +50,17 @@ The harness is test-only code in `e2e/`; it is not part of the build.
 
 ## Configuration
 
-| Variable                  | Required    | Default                 | Purpose                                                                              |
-| ------------------------- | ----------- | ----------------------- | ------------------------------------------------------------------------------------ |
-| `DATABASE_URL`            | yes         | —                       | PostgreSQL connection string                                                         |
-| `APP_ORIGIN`              | yes in prod | `http://localhost:5173` | Public origin; mutations from other origins are rejected                             |
-| `NODE_ENV`                |             | `development`           | `production` enables secure cookies, masked errors, static client serving            |
-| `PORT`                    |             | `3000`                  | HTTP port                                                                            |
-| `TRUST_PROXY`             |             | `0`                     | Number of reverse-proxy hops to trust for client IPs (rate limiting, audit)          |
-| `STORAGE_DIR`             |             | `./storage`             | Private document storage directory (must not be web-served; back it up)              |
-| `FLOWOS_MIGRATE_ON_START` |             | `false`                 | Apply migrations at boot — only for single-instance setups                           |
-| `FLOWOS_WORKER`           |             | `true`                  | Run the workflow/expiry worker in this process                                       |
-| `ANTHROPIC_API_KEY`       |             | —                       | Enables the AI assistant (server-side only). Unset: assistant shows "not configured" |
+| Variable                  | Required       | Default                 | Purpose                                                                                                                                                                   |
+| ------------------------- | -------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`            | yes            | —                       | PostgreSQL connection string                                                                                                                                              |
+| `APP_ORIGIN`              | yes in prod    | `http://localhost:5173` | Public origin; mutations from other origins are rejected. The server refuses to start in production without it                                                            |
+| `NODE_ENV`                |                | `development`           | `production` enables secure cookies, masked errors, static client serving                                                                                                 |
+| `PORT`                    |                | `3000`                  | HTTP port                                                                                                                                                                 |
+| `TRUST_PROXY`             | behind a proxy | `0`                     | Number of reverse-proxy hops to trust for client IPs. Leaving it 0 behind a load balancer makes every client share one rate-limit bucket (logged as a warning at startup) |
+| `STORAGE_DIR`             |                | `./storage`             | Private document storage directory (must not be web-served; back it up)                                                                                                   |
+| `FLOWOS_MIGRATE_ON_START` |                | `false`                 | Apply migrations at boot — only for single-instance setups                                                                                                                |
+| `FLOWOS_WORKER`           |                | `true`                  | Run the workflow/expiry worker in this process                                                                                                                            |
+| `ANTHROPIC_API_KEY`       |                | —                       | Enables the AI assistant (server-side only). Unset: assistant shows "not configured"                                                                                      |
 
 ## Production build
 
@@ -100,14 +100,42 @@ prepared but not executed until the confirmation call (a chat "yes" does not
 count), a viewer never offered write tools, and no data from another
 organization in tool results or answers.
 
+## Operations
+
+- **Health:** `GET /api/health` is liveness (the process serves HTTP). `GET /api/ready` is readiness: 200 when the database answers within 2 s, 503 otherwise and while shutting down. Route load-balancer traffic on `/api/ready`.
+- **Shutdown:** on `SIGTERM`/`SIGINT` the server marks itself not ready, stops accepting connections, lets in-flight requests and the current worker tick finish, closes the database pool and exits 0; it force-exits after 10 s. Long assistant streams may be cut by that limit.
+- **Database outages:** idle connections lost to a Postgres restart are replaced (the process no longer crashes). Connections time out after 5 s; statements after 30 s; idle transactions after 60 s. The worker backs off exponentially (up to 60 s) while the database is unreachable and logs when it recovers.
+- **Startup failures** (invalid configuration, port in use) exit with code 1 so a supervisor restarts or alerts.
+- **Worker:** workflow ticks every 2 s; housekeeping (document expiry reminders, purging expired rate-limit windows and sessions) once a minute. A run whose process died on its final attempt is marked failed and its owner notified.
+- **Static files:** hashed assets are served `immutable` for a year; `index.html` is `no-cache`; no source maps are published.
+- **Logs** go to stdout/stderr as plain text. Database errors are logged as SQLSTATE plus table/constraint only, never with query values.
+
+### Recovery procedures
+
+- _Database restored from backup:_ run `npm run db:migrate` (idempotent), then start the app. Document files in `STORAGE_DIR` must come from a backup taken at the same time; a record whose file is missing returns an error on download.
+- _Stuck workflow runs:_ runs left `RUNNING` by a dead process are re-claimed after their 5-minute lock expires, or failed if it was their last attempt. Failed runs can be retried from the workflow page.
+- _Assistant conversation stuck "answering":_ its lock expires after 3 minutes without renewal.
+
+## Rotating the Anthropic API key
+
+1. In the Anthropic Console, create a new key.
+2. Update `ANTHROPIC_API_KEY` in the secret store (or `.env`) of every server instance and restart them; the key is read at startup.
+3. Verify: `npm run test:live` against a test database, or ask the assistant a question in the app.
+4. Revoke the old key in the Console.
+
+A leaked key (including the one committed in `76ad080`, see SECURITY.md) must be revoked immediately, before rotation is complete.
+
 ### Checklist for a real deployment
 
 - [ ] Terminate TLS in front of the app (cookies are `Secure` in production) and set `TRUST_PROXY` accordingly.
+- [ ] Point load-balancer health checks at `/api/ready`; allow ≥10 s for graceful shutdown.
 - [ ] Use a managed PostgreSQL with backups and point-in-time recovery.
 - [ ] Mount `STORAGE_DIR` on persistent, backed-up, non-public storage — or implement an S3-compatible `StorageAdapter` (not implemented yet).
 - [ ] Run exactly the replicas you need with `FLOWOS_WORKER=true` on at least one (multiple are safe).
 - [ ] Run `npm run db:migrate` as a release step, not at boot, when running multiple instances.
 - [ ] Configure log shipping (the server logs to stdout/stderr).
 - [ ] Review [SECURITY.md](SECURITY.md) "Known gaps".
+
+**Not verified:** no real deployment exists. Everything above was verified locally and in CI (production build started with `node`, fresh database), not on a hosting platform.
 
 CI: `.github/workflows/ci.yml` runs `npm run check` against a Postgres 16 service and the browser E2E against the production build on every pull request and push to `main`. No container image or infrastructure-as-code exists yet.

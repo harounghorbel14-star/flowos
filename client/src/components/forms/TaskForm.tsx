@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { TASK_PRIORITIES, TASK_STATUSES, type TaskPriority, type TaskStatus } from "@shared/domain";
 import { personName } from "../../lib/format";
-import { errorMessage, fieldErrors, trpc } from "../../lib/trpc";
+import { fieldErrors, formError, trpc } from "../../lib/trpc";
 import { useToast } from "../toast";
 import { Button, enumOptions, Modal, SelectField, TextAreaField, TextField } from "../ui";
 
@@ -66,6 +66,13 @@ function TaskFormInner({
   const update = trpc.tasks.update.useMutation({ onSuccess: (t) => done(t.id) });
   const mutation = editing ? update : create;
   const errors = fieldErrors(mutation.error);
+  const topError = formError(mutation.error, [
+    "title",
+    "description",
+    "assigneeEmployeeId",
+    "projectId",
+    "dueDate",
+  ]);
   const set =
     <K extends keyof TaskFormValues>(k: K) =>
     (e: { target: { value: string } }) =>
@@ -107,9 +114,7 @@ function TaskFormInner({
           submit();
         }}
       >
-        {mutation.error && Object.keys(errors).length === 0 ? (
-          <div className="form-error">{errorMessage(mutation.error)}</div>
-        ) : null}
+        {topError ? <div className="form-error">{topError}</div> : null}
         <TextField
           label="Title"
           required

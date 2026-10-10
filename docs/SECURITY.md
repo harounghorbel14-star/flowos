@@ -6,6 +6,8 @@ readiness — see "Known gaps" at the end.
 
 ## Authentication and sessions
 
+Password change (current password required, rate limited) and "sign out other devices" are available under Settings → Account; both are audited.
+
 | Control                                                                                                                                                                                                                                                      | Where                         | Verified by                               |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- | ----------------------------------------- |
 | scrypt password hashing (N=2^15, r=8, p=1, 16-byte salt), constant-time compare                                                                                                                                                                              | `server/src/auth/password.ts` | `foundation.test.ts`                      |
@@ -71,10 +73,16 @@ permissions in `shared/permissions.ts` and enforced in services.
 - Task numbers are allocated under a row lock (concurrent creation test).
 - Workflow runs: `UNIQUE(workflow_id, event_id)`, `SKIP LOCKED` claiming, and one-success-per-step index (`workflows.test.ts`).
 - Document expiry reminders are claimed with a conditional update (sent once).
+- At most one open invitation per (organization, email): partial unique index (migration 0009); concurrent invites leave exactly one (`hardening.test.ts`).
+- Manager changes take a per-organization advisory lock before the reporting-cycle check.
+- Assistant turns: one per conversation; the lock is renewed before each model request and released only by its owner, so a slow turn cannot corrupt the transcript of a newer one (`ai.test.ts`).
+- Workflow runs abandoned on their final attempt (process crash) are failed and the owner notified, never retried forever (`workflows.test.ts`).
+- A repeated identical approval decision returns 409 ("already approved"); the UI disables the button while a decision is pending.
 
 ## Files
 
 - Type allow-list by magic bytes; HTML/SVG/script-like text and unknown binaries rejected regardless of extension.
+- Uploads authenticate the session, membership and `document:upload`, and apply a 30/min per-user limit, **before** reading the 10 MB body (`documents.test.ts`).
 - Sanitized file names; random storage keys validated against a strict pattern before touching the filesystem (no path traversal).
 - Files written `0600` in a `0700` directory outside the web root; downloads only via the authorized endpoint with `Content-Disposition: attachment`, `nosniff`, `Cache-Control: private, no-store`, `CSP: default-src 'none'; sandbox`.
 
@@ -92,6 +100,8 @@ permissions in `shared/permissions.ts` and enforced in services.
 | Conversations private to their user; transcript append-only (DB trigger)                                                                                                                                                                  | schema, migration 0007                      | `ai.test.ts`                               |
 | Proposals and confirmed executions are audited; every tool call and model request is logged with outcome/usage                                                                                                                            | `ai_tool_calls`, `ai_usage`, `audit_events` | `ai.test.ts`                               |
 | Rate limit 20 turns/min/user; one turn at a time per conversation                                                                                                                                                                         | `assistant.ts`                              | `ai.test.ts`                               |
+| Confirmation cards name what changes: task number, title, current and new status; assignee, project, due date. A reference to another organization's record prepares nothing                                                              | `tools.ts` `describe`                       | `ai.test.ts`                               |
+| A client disconnect aborts the turn and the model request; history is bounded to whole recent exchanges                                                                                                                                   | `http.ts`, `fitHistory`                     | `ai.test.ts`                               |
 
 Residual risk: prompt injection via record text (e.g. a task title) could steer
 the model's _read_ behaviour or wording within the user's own permissions; it
@@ -103,6 +113,8 @@ cannot execute writes without the user's confirmation.
 - `.env*` files are git-ignored (only `.env.example` is committed).
 - No credentials are hard-coded. No AI key is required; when absent the assistant reports that it is not configured.
 - The e2e AI harness (`e2e/ai-harness.ts`) injects a scripted provider for testing; it is not imported by the application.
+- Logs never include query parameters: internal errors pass through `logSafeError`, which reduces database errors to SQLSTATE and table/constraint (drizzle's message embeds every bound value, e.g. password hashes) (`hardening.test.ts`).
+- Production builds ship no source maps.
 - `.env.example` must keep `ANTHROPIC_API_KEY=` empty: an empty value means "not configured", while a placeholder string would make the server try to call the API with it.
 
 ### Incident: credential committed to `.env.example` (2026-10-09)
@@ -113,6 +125,8 @@ cannot execute writes without the user's confirmation.
   It was not used or tested by this work.
 - **Required action (owner): revoke it in the Anthropic Console** and issue a
   new key that is stored only as a secret (see [DEPLOYMENT.md](DEPLOYMENT.md#configuring-the-anthropic-api-key)).
+  Status as of the stabilization pass: revocation not confirmed by the owner.
+  Never reuse this value.
 - The value is removed from the working tree by the stabilization PR. It is
   still in git history (`76ad080`, and as the removed line of the fixing
   commit) and in any clone or fork made since. History has **not** been
@@ -132,9 +146,10 @@ dependencies report no known vulnerabilities.
 ## Known gaps (not yet implemented)
 
 - **No email delivery**: password reset, email verification and invitation emails do not exist. Invitations are shared as links by the inviter.
+- **Emails are not verified.** Someone can register an address they do not own first; the real owner then cannot sign up, and an invitation link for that address can be accepted by that account. Signup also reveals whether an email is registered. Fixing this needs email delivery (above).
 - **No MFA / SSO.**
 - **No account deletion / data export** (GDPR workflows). Note: user deletion is currently blocked by the append-only audit trigger (actor reference) — a dedicated anonymization path is required.
 - **No row-level security in Postgres**; isolation relies on service scoping plus composite FKs.
 - **No malware scanning** of uploads.
-- **No session listing/revocation UI** beyond logout.
+- **Sessions**: 30-day sliding expiry capped at 90 days from sign-in; changing the password or "Sign out other devices" revokes every other session (`hardening.test.ts`). There is no per-device session list.
 - Penetration testing and a third-party review have not been performed.

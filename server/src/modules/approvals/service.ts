@@ -11,8 +11,7 @@ import { badRequest, conflict, forbidden, notFound } from "../../lib/errors";
 import { offsetOf, toPage, type PageInput } from "../../lib/pagination";
 import { emit } from "../../lib/events";
 import { notify } from "../notifications/service";
-
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+import { isoDate } from "../../lib/validation";
 
 /** Type-specific payload schemas. Unknown keys are stripped. */
 export const PAYLOAD_SCHEMAS = {

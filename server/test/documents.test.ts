@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
 import { documents } from "../src/db/schema";
 import { addDaysISO, todayISO } from "../src/lib/dates";
+import { uploadLimiter } from "../src/modules/documents/http";
 import { notifyExpiringDocuments } from "../src/modules/documents/service";
 import { safeFileName, sniff } from "../src/storage/sniff";
 import { addMember, createOrg, db, resetLimiters, type TestUser } from "./helpers";
@@ -146,6 +147,21 @@ describe("document storage", () => {
     expect(
       (await upload("flowos_session=forged", org.id, { title: "x", fileName: "x.pdf" }, PDF)).status,
     ).toBe(401);
+  });
+
+  it("checks permission and rate limit before reading the upload body", async () => {
+    const { owner, org } = await orgWithPasswords();
+    const viewer = await addMember(org.id, owner, "VIEWER");
+    await setPassword(viewer);
+    const big = Buffer.concat([PDF, Buffer.alloc(5 * 1024 * 1024)]);
+    expect(
+      (await upload(await cookieFor(viewer), org.id, { title: "x", fileName: "x.pdf" }, big)).status,
+    ).toBe(403);
+    const cookie = await cookieFor(owner);
+    for (let i = 0; i < 30; i++) await uploadLimiter.consume(`user:${owner.id}`, db());
+    const res = await upload(cookie, org.id, { title: "x", fileName: "x.pdf" }, PDF);
+    expect(res.status).toBe(429);
+    await uploadLimiter.reset();
   });
 
   it("blocks downloads across tenants, for non-members, and when logged out", async () => {

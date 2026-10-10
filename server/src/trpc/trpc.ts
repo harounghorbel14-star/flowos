@@ -6,13 +6,14 @@ import { isProduction } from "../env";
 import { assertCan } from "../lib/actor";
 import { loadActor } from "../lib/membership";
 import { toTRPCError } from "../lib/errors";
+import { logSafeError } from "../lib/logging";
 import type { Context } from "./context";
 
 const t = initTRPC.context<Context>().create({
   transformer: superjson,
   errorFormatter({ shape, error }) {
     const isInternal = error.code === "INTERNAL_SERVER_ERROR";
-    if (isInternal) console.error("[trpc] internal error:", error.cause ?? error);
+    if (isInternal) console.error("[trpc] internal error:", logSafeError(error.cause ?? error));
     return {
       ...shape,
       message: isInternal && isProduction() ? "Something went wrong. Please try again." : shape.message,

@@ -16,7 +16,13 @@ function weekLabel(iso: string, i: number, count: number) {
 }
 
 const hours = (h: number) =>
-  h < 48 ? `${Math.round(h * 10) / 10} h` : `${Math.round((h / 24) * 10) / 10} d`;
+  h > 0 && h < 0.01
+    ? "<0.01 h"
+    : h < 1
+      ? `${Math.round(h * 100) / 100} h`
+      : h < 48
+        ? `${Math.round(h * 10) / 10} h`
+        : `${Math.round((h / 24) * 10) / 10} d`;
 
 /** Neutral week-over-week delta: states the change without judging it good or bad. */
 function Delta({ current, previous }: { current: number; previous: number }) {
@@ -148,6 +154,7 @@ function Body({ data }: { data: Data }) {
               series={[{ ...INK, label: "Median turnaround" }]}
               values={{ v: data.approvals.weeks.map((w) => w.medianHours) }}
               format={hours}
+              minScale={1}
               ariaLabel="Median hours from submission to decision, per week"
               emptyNote="No decisions in the last 8 weeks"
             />
@@ -230,7 +237,9 @@ function Body({ data }: { data: Data }) {
               const base = NOTABLE_LINK[e.entityType];
               const content = (
                 <>
-                  <span className="grow">{e.summary}</span>
+                  <span className="grow" style={{ flexBasis: 200 }}>
+                    {e.summary}
+                  </span>
                   <span className="faint" style={{ fontSize: 12, whiteSpace: "nowrap" }}>
                     {e.actorName ?? "System"} · {timeAgo(e.at)}
                   </span>
@@ -239,11 +248,13 @@ function Body({ data }: { data: Data }) {
               return (
                 <li key={i}>
                   {base && e.entityId ? (
-                    <Link to={`${base}${e.entityId}`} className="list-item">
+                    <Link to={`${base}${e.entityId}`} className="list-item" style={{ flexWrap: "wrap" }}>
                       {content}
                     </Link>
                   ) : (
-                    <div className="list-item">{content}</div>
+                    <div className="list-item" style={{ flexWrap: "wrap" }}>
+                      {content}
+                    </div>
                   )}
                 </li>
               );

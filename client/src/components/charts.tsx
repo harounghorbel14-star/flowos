@@ -44,11 +44,15 @@ export function niceTicks(max: number): number[] {
 
 const fmt = new Intl.NumberFormat();
 
+const LABEL_GAP = 56;
+
 /** Show every Nth x label so labels never collide; always keep the latest one. */
-function labelStride(spacing: number, minGap = 56) {
+function labelStride(spacing: number, minGap = LABEL_GAP) {
   return Math.max(1, Math.ceil(minGap / Math.max(spacing, 1)));
 }
 const showLabel = (i: number, last: number, stride: number) => (last - i) % stride === 0;
+/** Rough rendered width of an 11px axis label. */
+const labelWidth = (text: string) => text.length * 6.2;
 
 function Tooltip({
   x,
@@ -174,9 +178,9 @@ export function ColumnChart({
 
   return (
     <div ref={ref} className="chart" onPointerLeave={() => setHover(null)}>
-      <svg width={width} height={height} role="img" aria-label={ariaLabel}>
+      <svg width={width} height={height} role="group" aria-label={ariaLabel}>
         {ticks.map((t) => (
-          <g key={t}>
+          <g key={t} aria-hidden>
             <line x1={MARGIN.left} x2={width - MARGIN.right} y1={y(t)} y2={y(t)} className="chart-grid" />
             <text
               x={MARGIN.left - 8}
@@ -195,6 +199,7 @@ export function ColumnChart({
             <g
               key={cat}
               tabIndex={0}
+              role="img"
               aria-label={`${cat}: ${series.map((s) => `${s.label} ${values[s.key]?.[i] ?? 0}`).join(", ")}`}
               onPointerEnter={() => setHover(i)}
               onFocus={() => setHover(i)}
@@ -230,20 +235,33 @@ export function ColumnChart({
                     );
                   })
                 : null}
-              {showLabel(i, last, stride) ? (
-                <text
-                  x={MARGIN.left + band * i + band / 2}
-                  y={height - 8}
-                  textAnchor="middle"
-                  className="chart-axis"
-                >
-                  {cat}
-                </text>
-              ) : null}
             </g>
           );
         })}
-        <line x1={MARGIN.left} x2={width - MARGIN.right} y1={y(0)} y2={y(0)} className="chart-baseline" />
+        {/* X-axis labels sit outside the focusable groups so their hit areas stay within each band. */}
+        <g aria-hidden>
+          {categories.map((cat, i) =>
+            showLabel(i, last, stride) ? (
+              <text
+                key={cat}
+                x={MARGIN.left + band * i + band / 2}
+                y={height - 8}
+                textAnchor="middle"
+                className="chart-axis"
+              >
+                {cat}
+              </text>
+            ) : null,
+          )}
+        </g>
+        <line
+          x1={MARGIN.left}
+          x2={width - MARGIN.right}
+          y1={y(0)}
+          y2={y(0)}
+          className="chart-baseline"
+          aria-hidden
+        />
       </svg>
       {hover !== null ? (
         <Tooltip
@@ -269,6 +287,7 @@ export function LineChart({
   ariaLabel,
   format = (v) => fmt.format(v),
   emptyNote,
+  minScale = 0,
 }: {
   categories: string[];
   series: Series[];
@@ -277,12 +296,14 @@ export function LineChart({
   ariaLabel: string;
   format?: (v: number) => string;
   emptyNote?: ReactNode;
+  /** Smallest y-axis top, so tiny values do not stretch the axis into indistinguishable ticks. */
+  minScale?: number;
 }) {
   const { ref, width } = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const clipId = useId();
   const all = series.flatMap((s) => (values[s.key] ?? []).filter((v): v is number => v !== null));
-  const max = Math.max(0, ...all);
+  const max = Math.max(0, minScale, ...all);
   const ticks = niceTicks(max);
   const top = ticks[ticks.length - 1]!;
   const plotW = width - MARGIN.left - MARGIN.right;
@@ -290,6 +311,12 @@ export function LineChart({
   const step = categories.length > 1 ? plotW / (categories.length - 1) : plotW;
   const x = (i: number) => MARGIN.left + i * step;
   const stride = labelStride(step);
+  const lastCat = categories.length - 1;
+  // The last label is right-aligned (it ends at its point), so the centred label one stride
+  // before it can collide with it: drop that one when the gap between them gets too small.
+  const crowdedLast =
+    lastCat - stride >= 0 &&
+    stride * step - labelWidth(categories[lastCat]!) - labelWidth(categories[lastCat - stride]!) / 2 < 8;
   const y = (v: number) => MARGIN.top + plotH - (v / top) * plotH;
 
   const segments = (vals: (number | null)[]) => {
@@ -345,12 +372,12 @@ export function LineChart({
           </g>
         ))}
         {categories.map((cat, i) =>
-          showLabel(i, categories.length - 1, stride) ? (
+          showLabel(i, lastCat, stride) && !(crowdedLast && i === lastCat - stride) ? (
             <text
               key={cat}
               x={x(i)}
               y={height - 8}
-              textAnchor={i === categories.length - 1 ? "end" : "middle"}
+              textAnchor={i === lastCat ? "end" : "middle"}
               className="chart-axis"
             >
               {cat}

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { aiActions, aiMessages, aiUsage, tasks } from "../src/db/schema";
-import { aiLimiter, runTurn, SYSTEM_PROMPT, type TurnEvent } from "../src/modules/ai/assistant";
+import { aiActions, aiConversations, aiMessages, aiUsage, tasks } from "../src/db/schema";
+import { aiLimiter, fitHistory, runTurn, SYSTEM_PROMPT, type TurnEvent } from "../src/modules/ai/assistant";
 import {
   setAiProvider,
   type AiMessage,
@@ -385,5 +385,167 @@ describe("AI assistant", () => {
     await expect(
       turn(await actorFor(owner, org.id), c.id, "hi", new ScriptedProvider([text("hi")])),
     ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("confirmation cards name the affected task, person and project", async () => {
+    const { owner, org, as } = await createOrg();
+    const actor = await actorFor(owner, org.id);
+    const t = await as(owner).tasks.create({ title: "Renew office lease" });
+    const emp = await as(owner).employees.create({
+      firstName: "Lena",
+      lastName: "Lopez",
+      email: `l-${randomUUID()}@example.test`,
+    });
+    const project = await as(owner).projects.create({ name: "HQ move" });
+    const c = await as(owner).ai.createConversation({});
+    const events = await turn(
+      actor,
+      c.id,
+      "Close the lease task and add one for Lena",
+      new ScriptedProvider([
+        () => ({
+          content: [
+            {
+              type: "tool_use",
+              id: `toolu_${randomUUID()}`,
+              name: "update_task_status",
+              input: { taskId: t.id, status: "DONE" },
+            },
+            {
+              type: "tool_use",
+              id: `toolu_${randomUUID()}`,
+              name: "create_task",
+              input: { title: "Book movers", assigneeEmployeeId: emp.id, projectId: project.id },
+            },
+          ],
+          stop: "tool_use",
+        }),
+        text("Prepared both."),
+      ]),
+    );
+    const summaries = events.flatMap((e) => (e.type === "action" ? [e.action.summary] : []));
+    expect(summaries).toEqual([
+      `Move task #${t.number} “Renew office lease” from “To do” to “Done”`,
+      "Create task “Book movers” · Medium priority · no due date · assigned to Lena Lopez · in project HQ move",
+    ]);
+  });
+
+  it("prepares nothing when a write references another organization's record", async () => {
+    const a = await createOrg();
+    const b = await createOrg();
+    const foreignTask = await b.as(b.owner).tasks.create({ title: "Other org task" });
+    const foreignEmp = await b.as(b.owner).employees.create({
+      firstName: "Far",
+      lastName: "Away",
+      email: `f-${randomUUID()}@example.test`,
+    });
+    const actor = await actorFor(a.owner, a.org.id);
+    const c = await a.as(a.owner).ai.createConversation({});
+    const provider = new ScriptedProvider([
+      () => ({
+        content: [
+          {
+            type: "tool_use",
+            id: `toolu_${randomUUID()}`,
+            name: "update_task_status",
+            input: { taskId: foreignTask.id, status: "DONE" },
+          },
+          {
+            type: "tool_use",
+            id: `toolu_${randomUUID()}`,
+            name: "create_task",
+            input: { title: "x", assigneeEmployeeId: foreignEmp.id },
+          },
+        ],
+        stop: "tool_use",
+      }),
+      text("Could not prepare those."),
+    ]);
+    const events = await turn(actor, c.id, "Do it", provider);
+    expect(events.some((e) => e.type === "action")).toBe(false);
+    expect(events.filter((e) => e.type === "tool").map((e) => e.type === "tool" && e.outcome)).toEqual([
+      "INVALID",
+      "INVALID",
+    ]);
+    expect(await db().select().from(aiActions).where(eq(aiActions.conversationId, c.id))).toHaveLength(0);
+    // The model is told why, without details of the other organization's record.
+    const results = JSON.stringify(lastToolResults(provider.requests[1]!));
+    expect(results).not.toContain("Other org task");
+    expect(results).not.toContain("Far");
+  });
+
+  it("a turn whose lock was taken over stops and never releases the newer lock", async () => {
+    const { owner, org, as } = await createOrg();
+    const actor = await actorFor(owner, org.id);
+    const c = await as(owner).ai.createConversation({});
+    const stolen = new Date(Date.now() + 120_000);
+    const provider = new ScriptedProvider([
+      callTool("get_operational_snapshot", {}),
+      // Never reached: the lock is lost before the second request.
+      text("unreachable"),
+    ]);
+    const original = provider.run.bind(provider);
+    provider.run = async (req, onText) => {
+      const res = await original(req, onText);
+      // Simulate another tab starting a turn after this one's lock lapsed.
+      await db().update(aiConversations).set({ lockedUntil: stolen }).where(eq(aiConversations.id, c.id));
+      return res;
+    };
+    await expect(turn(actor, c.id, "status?", provider)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(provider.requests).toHaveLength(1);
+    const [conv] = await db().select().from(aiConversations).where(eq(aiConversations.id, c.id));
+    expect(conv!.lockedUntil?.getTime()).toBe(stolen.getTime());
+  });
+
+  it("stops the turn when the client disconnects", async () => {
+    const { owner, org, as } = await createOrg();
+    const actor = await actorFor(owner, org.id);
+    const c = await as(owner).ai.createConversation({});
+    const abort = new AbortController();
+    const provider = new ScriptedProvider([
+      () => {
+        abort.abort(); // the browser tab closed while the first answer streamed
+        return callTool("get_operational_snapshot", {})();
+      },
+      text("unreachable"),
+    ]);
+    const events: TurnEvent[] = [];
+    await runTurn(db(), actor, c.id, "status?", (e) => events.push(e), provider, abort.signal);
+    expect(provider.requests).toHaveLength(1);
+    const [conv] = await db().select().from(aiConversations).where(eq(aiConversations.id, c.id));
+    expect(conv!.lockedUntil).toBeNull();
+  });
+
+  it("drops the oldest whole exchanges when the history outgrows the budget", () => {
+    const user = (t: string) => ({ role: "user" as const, content: [{ type: "text" as const, text: t }] });
+    const asst = (t: string) => ({
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text: t }],
+    });
+    const toolUse = {
+      role: "assistant" as const,
+      content: [{ type: "tool_use", id: "t1", name: "x", input: {} }],
+    };
+    const toolResult = {
+      role: "user" as const,
+      content: [{ type: "tool_result", tool_use_id: "t1", content: "r" }],
+    };
+    const big = "x".repeat(1000);
+    const history = [
+      user(big),
+      asst(big),
+      user(big),
+      toolUse,
+      toolResult,
+      asst(big),
+      user("latest"),
+    ] as never[];
+    expect(fitHistory(history, 100_000)).toHaveLength(7);
+    const fitted = fitHistory(history, 1500);
+    // Cut at an exchange start, never between a tool_use and its tool_result.
+    expect(fitted[0]).toEqual(user("latest"));
+    const mid = fitHistory(history, 2400);
+    expect(mid[0]).toEqual(user(big));
+    expect(mid).toHaveLength(5);
   });
 });

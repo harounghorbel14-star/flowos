@@ -2,7 +2,16 @@ import { Check, MessageSquarePlus, Search, Send, Sparkles, Trash2, X } from "luc
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useToast } from "../components/toast";
-import { Badge, Button, EmptyState, ErrorState, PageHeader, Panel, SkeletonRows } from "../components/ui";
+import {
+  Badge,
+  Button,
+  ConfirmDialog,
+  EmptyState,
+  ErrorState,
+  PageHeader,
+  Panel,
+  SkeletonRows,
+} from "../components/ui";
 import { timeAgo } from "../lib/format";
 import { errorMessage, getActiveOrgId, trpc, type RouterOutputs } from "../lib/trpc";
 
@@ -311,10 +320,13 @@ export function AssistantPage() {
     },
     onError: toast.error,
   });
+  const [deleting, setDeleting] = useState<{ id: string; title: string } | null>(null);
   const remove = trpc.ai.deleteConversation.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (_r, vars) => {
       await utils.ai.conversations.invalidate();
-      navigate("/assistant");
+      setDeleting(null);
+      toast.success("Conversation deleted.");
+      if (vars.id === id) navigate("/assistant");
     },
     onError: toast.error,
   });
@@ -334,6 +346,7 @@ export function AssistantPage() {
         }
       />
       {status.isLoading ? <SkeletonRows rows={3} /> : null}
+      {status.error ? <ErrorState error={status.error} onRetry={() => void status.refetch()} /> : null}
       {status.data && !status.data.configured ? (
         <div className="panel">
           <EmptyState icon={<Sparkles size={18} />} title="The AI assistant is not configured on this server">
@@ -375,7 +388,7 @@ export function AssistantPage() {
                       variant="ghost"
                       icon
                       aria-label={`Delete ${c.title}`}
-                      onClick={() => remove.mutate({ id: c.id })}
+                      onClick={() => setDeleting({ id: c.id, title: c.title })}
                     >
                       <Trash2 aria-hidden />
                     </Button>
@@ -403,6 +416,16 @@ export function AssistantPage() {
           )}
         </div>
       ) : null}
+      <ConfirmDialog
+        open={deleting !== null}
+        onClose={() => setDeleting(null)}
+        title="Delete this conversation?"
+        body={`“${deleting?.title ?? ""}” and its messages are deleted. This cannot be undone; tasks it already created or updated are kept.`}
+        confirmLabel="Delete conversation"
+        danger
+        loading={remove.isPending}
+        onConfirm={() => deleting && remove.mutate({ id: deleting.id })}
+      />
     </>
   );
 }

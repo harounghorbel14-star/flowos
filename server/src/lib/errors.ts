@@ -30,6 +30,21 @@ export function toTRPCError(err: unknown): TRPCError | undefined {
   // Foreign key violation: a referenced record is missing or in another tenant.
   if (isPgError(err, "23503"))
     return new TRPCError({ code: "BAD_REQUEST", message: "A referenced record is invalid." });
+  // Data exceptions (class 22: impossible dates, NUL bytes, out-of-range numbers) are bad input, not server faults.
+  if (pgErrorClass(err) === "22")
+    return new TRPCError({ code: "BAD_REQUEST", message: "Some of the values entered are not valid." });
+  return undefined;
+}
+
+/** The two-character SQLSTATE class of a Postgres error in the cause chain, if any. */
+function pgErrorClass(err: unknown): string | undefined {
+  let current: unknown = err;
+  for (let i = 0; i < 4 && current; i++) {
+    const code =
+      typeof current === "object" && current !== null ? (current as { code?: unknown }).code : undefined;
+    if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) return code.slice(0, 2);
+    current = (current as { cause?: unknown }).cause;
+  }
   return undefined;
 }
 

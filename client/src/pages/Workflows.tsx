@@ -153,10 +153,11 @@ export function WorkflowsPage() {
                         <input
                           type="checkbox"
                           checked={w.enabled}
-                          disabled={toggle.isPending}
+                          disabled={toggle.isPending && toggle.variables?.id === w.id}
                           onChange={(e) => toggle.mutate({ id: w.id, enabled: e.target.checked })}
                         />
                         {w.enabled ? "On" : "Paused"}
+                        <span className="sr-only"> — {w.name}</span>
                       </label>
                     ) : (
                       <Badge tone={w.enabled ? "teal" : undefined}>{w.enabled ? "On" : "Paused"}</Badge>
@@ -253,6 +254,8 @@ export function WorkflowDetailPage() {
       />
       <div className="grid main-side">
         <Panel title="Run history" flush>
+          {runs.error ? <ErrorState error={runs.error} onRetry={() => void runs.refetch()} /> : null}
+          {runs.isLoading ? <SkeletonRows rows={3} /> : null}
           {runs.data && runs.data.total === 0 ? (
             <EmptyState compact title="No runs yet">
               This workflow runs the next time “{TRIGGERS[w.trigger]?.label.toLowerCase()}” happens and the
@@ -270,7 +273,12 @@ export function WorkflowDetailPage() {
                     </span>
                   </span>
                   {r.status === "FAILED" && can("workflow:manage") ? (
-                    <Button size="sm" onClick={() => retry.mutate({ runId: r.id })} loading={retry.isPending}>
+                    <Button
+                      size="sm"
+                      onClick={() => retry.mutate({ runId: r.id })}
+                      loading={retry.isPending && retry.variables?.runId === r.id}
+                      disabled={retry.isPending}
+                    >
                       <RotateCw aria-hidden /> Retry
                     </Button>
                   ) : null}

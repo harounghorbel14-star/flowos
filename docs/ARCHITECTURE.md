@@ -31,7 +31,7 @@ those mechanisms.
 shared/            Domain vocabulary used by both sides (enums, labels, permissions, workflow model)
 server/src/
   app.ts           Express app: security headers, CSRF guard, tRPC + document routes, static client
-  index.ts         Process entry: optional migrations, HTTP server, workflow worker
+  index.ts         Process entry: optional migrations, HTTP server, workflow worker, graceful shutdown
   env.ts           Validated configuration (never prints values)
   auth/            Password hashing, sessions, shared (Postgres) rate limiting
   db/              Drizzle schema, client, migration runner (`migrate-cli.ts` is the CLI entry)
@@ -120,7 +120,12 @@ service mutation ──(same tx)──► domain_events (outbox)
   `{{field}}` templates. No user-supplied code is executed.
 - Runs snapshot their actions at dispatch, so editing a workflow cannot change
   an in-flight run. Events produced ≥3 workflow hops deep are not dispatched.
-- The worker also sends document expiry reminders.
+- Housekeeping runs about once a minute in the same worker: document expiry
+  reminders and purging expired rate-limit windows and sessions.
+- Runs left `RUNNING` by a dead process are re-claimed after their lock
+  expires; if that was their final attempt they are failed and the owner is
+  notified. Failed ticks back off exponentially (up to 60 s).
+- On shutdown the worker finishes its current tick before the pool closes.
 - Set `FLOWOS_WORKER=false` on API-only replicas. Multiple workers are safe
   (SKIP LOCKED + unique constraints).
 
@@ -154,7 +159,13 @@ browser ──ai.confirmAction(actionId, inputHash)──► checks → guarded 
   caching, eager tool-input streaming, and `fallbacks: "default"` for refusals.
 - The system prompt and tool list are static so the prefix caches; the date,
   user and organization travel in the user message.
-- The transcript is append-only so replayed thinking blocks stay valid.
+- The transcript is append-only so replayed thinking blocks stay valid. The
+  history sent per request is bounded (`fitHistory`): the oldest whole
+  exchanges are dropped, cutting only at a plain user message.
+- One turn per conversation: a lock renewed before each model request whose
+  expiry doubles as an ownership token. A client disconnect aborts the turn.
+- Confirmation cards are produced by each write tool's `describe`, which
+  resolves the affected records (task number and title, assignee, project).
 - Action outcomes (executed / rejected / failed / expired) are reported to the
   model as an `[Action update]` note at the start of the next user message.
 
@@ -166,6 +177,17 @@ end from `created_at`, `due_date` and `completed_at`. Sections that expose
 other people's approvals or workflow internals are gated by `approval:read_all`
 and `workflow:read`. Charts are plain SVG (`client/src/components/charts.tsx`):
 no chart library, validated series tokens `--series-1/2` per theme.
+
+## Process and errors
+
+- `GET /api/health` (liveness) and `GET /api/ready` (database check, 503 while
+  draining). `SIGTERM` drains HTTP and the worker, closes the pool, exits 0.
+- The pool handles lost idle connections, and sets connect, statement and
+  idle-in-transaction timeouts.
+- Internal errors are logged through `lib/logging.ts` `logSafeError`, which
+  never prints query parameters. Postgres data exceptions (class 22) map to
+  `BAD_REQUEST`; unique and FK violations to `CONFLICT`/`BAD_REQUEST`.
+- Dates are validated as real calendar dates (`lib/validation.ts`).
 
 ## Rate limiting
 

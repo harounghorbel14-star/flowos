@@ -82,7 +82,7 @@ export const sessions = pgTable(
     userAgent: text("user_agent"),
     ip: text("ip"),
   },
-  (t) => [index("sessions_user_idx").on(t.userId)],
+  (t) => [index("sessions_user_idx").on(t.userId), index("sessions_expires_idx").on(t.expiresAt)],
 );
 
 // ─── Tenancy ─────────────────────────────────────────────────────────────────
@@ -141,7 +141,14 @@ export const invitations = pgTable(
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("invitations_token_key").on(t.tokenHash), index("invitations_org_idx").on(t.orgId)],
+  (t) => [
+    uniqueIndex("invitations_token_key").on(t.tokenHash),
+    index("invitations_org_idx").on(t.orgId),
+    // At most one open invitation per email and organization, even under concurrent invites.
+    uniqueIndex("invitations_open_email_key")
+      .on(t.orgId, t.email)
+      .where(sql`${t.acceptedAt} is null and ${t.revokedAt} is null`),
+  ],
 );
 
 /**
@@ -331,6 +338,7 @@ export const approvalRequests = pgTable(
     uniqueIndex("approvals_org_id_key").on(t.orgId, t.id),
     index("approvals_org_approver_idx").on(t.orgId, t.approverUserId, t.status),
     index("approvals_org_requester_idx").on(t.orgId, t.requesterUserId),
+    index("approvals_org_created_idx").on(t.orgId, t.createdAt),
   ],
 );
 
@@ -368,7 +376,11 @@ export const notifications = pgTable(
     readAt: timestamp("read_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
-  (t) => [index("notifications_user_idx").on(t.orgId, t.userId, t.readAt, t.createdAt)],
+  (t) => [
+    index("notifications_user_idx").on(t.orgId, t.userId, t.readAt, t.createdAt),
+    // "All notifications, newest first" (the unread index above leads with read_at).
+    index("notifications_user_created_idx").on(t.orgId, t.userId, t.createdAt),
+  ],
 );
 
 // ─── Workflows ───────────────────────────────────────────────────────────────
@@ -507,6 +519,10 @@ export const documents = pgTable(
     uniqueIndex("documents_storage_key").on(t.storageKey),
     index("documents_org_idx").on(t.orgId, t.createdAt),
     index("documents_org_expiry_idx").on(t.orgId, t.expiresOn),
+    // Cross-tenant expiry-reminder scan: only documents not yet reminded.
+    index("documents_expiry_pending_idx")
+      .on(t.expiresOn)
+      .where(sql`${t.expiryNotifiedAt} is null`),
     index("documents_org_employee_idx").on(t.orgId, t.employeeId),
   ],
 );

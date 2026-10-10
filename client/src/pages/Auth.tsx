@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { label } from "@shared/domain";
 import { Button, EmptyState, ErrorState, TextField } from "../components/ui";
 import { useToast } from "../components/toast";
-import { errorMessage, fieldErrors, trpc } from "../lib/trpc";
+import { errorMessage, fieldErrors, formError, trpc } from "../lib/trpc";
 
 function AuthLayout({ children }: { children: ReactNode }) {
   return (
@@ -84,9 +84,12 @@ export function LoginPage() {
 
 export function SignupPage() {
   const utils = trpc.useUtils();
+  const [params] = useSearchParams();
+  const next = params.get("next");
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const signup = trpc.auth.signup.useMutation({ onSuccess: () => utils.auth.me.invalidate() });
   const errors = fieldErrors(signup.error);
+  const topError = formError(signup.error, ["name", "email", "password"]);
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
   return (
@@ -104,9 +107,9 @@ export function SignupPage() {
         }}
         noValidate
       >
-        {signup.error && Object.keys(errors).length === 0 ? (
+        {topError ? (
           <div className="form-error" role="alert">
-            {errorMessage(signup.error)}
+            {topError}
           </div>
         ) : null}
         <TextField
@@ -141,7 +144,8 @@ export function SignupPage() {
         </Button>
       </form>
       <p className="muted">
-        Already have an account? <Link to="/login">Sign in</Link>
+        Already have an account?{" "}
+        <Link to={`/login${next ? `?next=${encodeURIComponent(next)}` : ""}`}>Sign in</Link>
       </p>
     </AuthLayout>
   );

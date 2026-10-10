@@ -174,6 +174,9 @@ export async function getEmployee(db: Database, actor: Actor, id: string) {
 
 /** Reject a manager assignment that would create a reporting cycle. */
 async function assertNoManagerCycle(tx: Tx, orgId: string, employeeId: string, managerId: string) {
+  // Serialize manager changes per organization for the rest of this transaction: two concurrent
+  // edits (A reports to B, B reports to A) would each pass the check against the old chain.
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`flowos:manager-chain:${orgId}`}))`);
   let current: string | null = managerId;
   for (let depth = 0; current && depth < 50; depth++) {
     if (current === employeeId) throw badRequest("That manager would create a reporting cycle.");

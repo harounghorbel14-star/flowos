@@ -15,8 +15,16 @@ export function getDb(): Database {
     pool = new pg.Pool({
       connectionString: env().DATABASE_URL,
       max: 10,
-      // Date math (current_date, overdue checks) is defined in UTC everywhere.
-      options: "-c timezone=UTC",
+      // Fail fast instead of hanging when the database is unreachable.
+      connectionTimeoutMillis: 5000,
+      // Date math (current_date, overdue checks) is defined in UTC everywhere. Bound runaway
+      // statements and transactions left open by a stuck request.
+      options: "-c timezone=UTC -c statement_timeout=30s -c idle_in_transaction_session_timeout=60s",
+    });
+    // An idle client losing its connection (database restart, failover) must not crash the
+    // process; the pool replaces it on the next checkout.
+    pool.on("error", (err) => {
+      console.warn("[db] idle connection lost:", (err as { code?: string }).code ?? err.message);
     });
     database = drizzle(pool, { schema });
   }

@@ -329,6 +329,25 @@ async function step(name, fn) {
     await m.close();
   });
 
+  await step("Mia changes her password and signs in with the new one", async () => {
+    const newPassword = "mia-new-password-33";
+    await b.goto(`${BASE}/settings/account`);
+    await b.getByLabel("Current password").fill(MIA.password);
+    await b.getByLabel("New password", { exact: true }).fill(newPassword);
+    await b.getByLabel("Repeat new password").fill(newPassword);
+    await b.getByRole("button", { name: "Change password" }).click();
+    await b.getByText(/^Password changed/).waitFor();
+    const fresh = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+    const f = await fresh.newPage();
+    watch(f, "mia-relogin");
+    await f.goto(`${BASE}/login`);
+    await f.getByLabel("Work email").fill(MIA.email);
+    await f.getByLabel("Password").fill(newPassword);
+    await f.getByRole("button", { name: "Sign in" }).click();
+    await f.waitForURL(`${BASE}/`);
+    await fresh.close();
+  });
+
   await browser.close();
   const unexpected = problems.filter((p) => !/403|Forbidden|permission/i.test(p));
   console.log(`\nConsole problems (${problems.length}, unexpected ${unexpected.length}):`);

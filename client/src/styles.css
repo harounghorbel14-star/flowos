@@ -22,6 +22,7 @@
 
   --critical: #b4361c;
   --critical-wash: #f7e3dc;
+  --on-critical: #ffffff;
   --attention: #9a5a00;
   --attention-wash: #f5e8cf;
   --good: #2f7a3b;
@@ -65,6 +66,7 @@
     --on-teal: #08201d;
     --critical: #f08a6c;
     --critical-wash: #3a1d15;
+    --on-critical: #2a0d05;
     --attention: #e7b15c;
     --attention-wash: #352711;
     --good: #82c98c;
@@ -98,6 +100,7 @@
   --on-teal: #08201d;
   --critical: #f08a6c;
   --critical-wash: #3a1d15;
+  --on-critical: #2a0d05;
   --attention: #e7b15c;
   --attention-wash: #352711;
   --good: #82c98c;
@@ -188,6 +191,7 @@ textarea {
   letter-spacing: -0.02em;
   line-height: 1.05;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 h1.display {
   font-size: clamp(28px, 3.4vw, 40px);
@@ -461,6 +465,9 @@ kbd {
   border-radius: var(--radius);
   background: var(--paper-raised);
   overflow: hidden;
+}
+.metrics.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .metric {
   padding: 16px 18px;
@@ -743,7 +750,7 @@ table.data a.row-link:hover {
 }
 .btn.danger.solid {
   background: var(--critical);
-  color: #fff;
+  color: var(--on-critical);
   border-color: var(--critical);
 }
 .btn.sm {
@@ -1134,7 +1141,7 @@ dialog.palette::backdrop {
 }
 .toast.error {
   background: var(--critical);
-  color: #fff;
+  color: var(--on-critical);
 }
 
 /* ─── Board ──────────────────────────────────────────────────────────────── */
@@ -1167,6 +1174,20 @@ dialog.palette::backdrop {
     border-color 120ms var(--ease),
     transform 120ms var(--ease);
 }
+.board-card > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.board-card .spread {
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.board-card .badge {
+  max-width: 100%;
+  height: auto;
+  min-height: 22px;
+  white-space: normal;
+}
 .board-card:hover {
   border-color: var(--line-strong);
   transform: translateY(-1px);
@@ -1196,6 +1217,8 @@ dialog.palette::backdrop {
 .timeline li {
   position: relative;
   padding: 0 0 14px 20px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .timeline li::before {
   content: "";
@@ -1248,8 +1271,15 @@ dialog.palette::backdrop {
   margin-bottom: -1px;
   white-space: nowrap;
 }
+@media (max-width: 520px) {
+  .tabs a,
+  .tabs button {
+    padding: 8px 8px;
+  }
+}
 .tabs [aria-current="page"],
-.tabs [aria-selected="true"] {
+.tabs [aria-selected="true"],
+.tabs [aria-pressed="true"] {
   color: var(--ink);
   border-bottom-color: var(--teal);
   font-weight: 500;
@@ -1333,6 +1363,14 @@ dialog.palette::backdrop {
   .metric:nth-child(-n + 2) {
     border-bottom: 1px solid var(--line);
   }
+  /* Three-up metrics stay in one row until the phone breakpoint. */
+  .metrics.three .metric {
+    border-bottom: 0;
+    border-right: 1px solid var(--line);
+  }
+  .metrics.three .metric:last-child {
+    border-right: 0;
+  }
 }
 @media (max-width: 860px) {
   .shell {
@@ -1345,11 +1383,17 @@ dialog.palette::backdrop {
     width: 270px;
     z-index: 50;
     transform: translateX(-100%);
-    transition: transform 200ms var(--ease);
+    /* Hidden (and so unfocusable) once the slide-out finishes. */
+    visibility: hidden;
+    transition:
+      transform 200ms var(--ease),
+      visibility 0s linear 200ms;
   }
   .shell.nav-open .rail {
     transform: none;
+    visibility: visible;
     box-shadow: var(--shadow-lg);
+    transition: transform 200ms var(--ease);
   }
   .scrim {
     position: fixed;
@@ -1389,14 +1433,17 @@ dialog.palette::backdrop {
   }
 }
 @media (max-width: 520px) {
-  .metrics {
+  .metrics,
+  .metrics.three {
     grid-template-columns: minmax(0, 1fr);
   }
-  .metric {
+  .metric,
+  .metrics.three .metric {
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
-  .metric:last-child {
+  .metric:last-child,
+  .metrics.three .metric:last-child {
     border-bottom: 0;
   }
 }

@@ -1,6 +1,8 @@
 import express, { type NextFunction, type Request, type Response, Router } from "express";
 import { SESSION_COOKIE, validateSession } from "../../auth/session";
 import { getDb } from "../../db/client";
+import { RateLimiter } from "../../auth/rateLimit";
+import { assertCan, type Actor } from "../../lib/actor";
 import { AppError } from "../../lib/errors";
 import { loadActor } from "../../lib/membership";
 import { documentMeta } from "./schemas";
@@ -25,17 +27,27 @@ async function requireActor(req: Request, orgId: string | undefined) {
   return actor;
 }
 
-function handle(fn: (req: Request, res: Response) => Promise<void>) {
+/** Wrap an async handler; with `chain`, a successful run continues to the next middleware. */
+function handle(fn: (req: Request, res: Response) => Promise<void>, chain = false) {
   return (req: Request, res: Response, next: NextFunction) => {
-    fn(req, res).catch((err: unknown) => {
-      if (err instanceof AppError) {
-        res.status(STATUS[err.code]).json({ error: err.message });
-        return;
-      }
-      next(err);
-    });
+    fn(req, res)
+      .then(() => {
+        if (chain) next();
+      })
+      .catch((err: unknown) => {
+        if (err instanceof AppError) {
+          // The request body may not have been read; do not keep the connection for it.
+          if (chain) res.setHeader("Connection", "close");
+          res.status(STATUS[err.code]).json({ error: err.message });
+          return;
+        }
+        next(err);
+      });
   };
 }
+
+/** Uploads per user per minute (shared across instances). */
+export const uploadLimiter = new RateLimiter("upload", 30, 60_000);
 
 /** RFC 6266 filename parameter, ASCII fallback plus UTF-8 form. */
 function contentDisposition(fileName: string) {
@@ -47,12 +59,20 @@ export function documentsHttpRouter(csrfGuard: (req: Request, res: Response, nex
   const r = Router();
 
   // Upload: raw bytes in the body, metadata as URI-encoded JSON in a header.
+  // The session, membership, permission and rate limit are checked BEFORE the body is read,
+  // so unauthenticated or throttled clients cannot make the server buffer 10 MB each.
   r.post(
     "/upload",
     csrfGuard,
-    express.raw({ type: () => true, limit: MAX_DOCUMENT_BYTES }),
     handle(async (req, res) => {
       const actor = await requireActor(req, req.header("x-flowos-org"));
+      assertCan(actor, "document:upload");
+      await uploadLimiter.consume(`user:${actor.userId}`, getDb());
+      res.locals.actor = actor;
+    }, true),
+    express.raw({ type: () => true, limit: MAX_DOCUMENT_BYTES }),
+    handle(async (req, res) => {
+      const actor = res.locals.actor as Actor;
       let metaRaw: unknown;
       try {
         metaRaw = JSON.parse(decodeURIComponent(req.header("x-flowos-meta") ?? "{}"));
