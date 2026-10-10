@@ -89,9 +89,10 @@ container with a persistent volume and a release command.
 3. Create an organization, a task, and complete it.
 4. Settings → Members → invite a second email; open the invitation link in a
    private window, sign up, accept.
-5. Workflows → create from the onboarding template → People → add an active
-   employee → within a few seconds two tasks appear and the run shows
-   _Succeeded_.
+5. Workflows → **Start from the onboarding template** → People → **Add
+   employee** (status Active, choose a Manager) → within a few seconds two
+   tasks appear and the run shows _Succeeded_ (the steps are in
+   [WEB_TESTING_GUIDE.md](WEB_TESTING_GUIDE.md), section 7).
 6. Documents → upload a small PDF, download it, then **restart the service**
    and download it again (proves the disk persists).
 7. Settings → Billing shows the plan; Settings → Integrations shows whether

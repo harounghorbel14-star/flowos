@@ -22,7 +22,7 @@ does it matter, and what should happen next?_
 - **Assistant** — ask about live data; it uses only tools your role allows and every change waits for your explicit confirmation (requires `ANTHROPIC_API_KEY`; not yet verified against the live API).
 - **Security** — tenant isolation enforced in services _and_ the database, role-based permissions, append-only audit log.
 
-Not built yet: email delivery, integrations, billing. See the status doc.
+Also built: billing plans with Stripe (verified with a fake Stripe in tests, not against Stripe itself) and Slack/Teams incoming webhooks (delivery to a real channel not verified yet). Not built: email delivery, OAuth integrations. See the status doc.
 
 ## Quick start
 
@@ -30,6 +30,7 @@ Not built yet: email delivery, integrations, billing. See the status doc.
 npm install
 cp .env.example .env
 createdb flowos && npm run db:migrate
+npm run db:seed        # optional demo data (local only)
 npm run dev            # http://localhost:5173
 ```
 
@@ -42,6 +43,8 @@ Full instructions, configuration and the production checklist:
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security model](docs/SECURITY.md)
 - [Running and deploying](docs/DEPLOYMENT.md)
+- [Web app testing guide](docs/WEB_TESTING_GUIDE.md)
+- [Staging deployment](docs/STAGING.md)
 
 ## Checks
 
