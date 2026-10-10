@@ -1,7 +1,8 @@
 import { Copy, Link2, Trash2, UserPlus } from "lucide-react";
-import { useState } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { NavLink, useNavigate, useSearchParams } from "react-router-dom";
 import { ROLES, label, type Role } from "@shared/domain";
+import { FEATURE_LABELS } from "@shared/billing";
 import { ROLE_RANK } from "@shared/permissions";
 import { useToast } from "../components/toast";
 import {
@@ -21,17 +22,26 @@ import {
 } from "../components/ui";
 import { formatDateTime, timeAgo } from "../lib/format";
 import { useOrg } from "../lib/session";
-import { errorMessage, fieldErrors, formError, trpc } from "../lib/trpc";
+import { errorMessage, fieldErrors, formError, trpc, type RouterOutputs } from "../lib/trpc";
 
 function SettingsTabs() {
   const { can } = useOrg();
+  const ref = useRef<HTMLElement>(null);
+  // On narrow screens the tab row scrolls; keep the current section visible.
+  useEffect(() => {
+    ref.current
+      ?.querySelector<HTMLElement>('[aria-current="page"]')
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, []);
   return (
-    <nav className="tabs" aria-label="Settings sections">
+    <nav className="tabs" aria-label="Settings sections" ref={ref}>
       <NavLink to="/settings" end>
         Organization
       </NavLink>
       <NavLink to="/settings/members">Members</NavLink>
       {can("audit:read") ? <NavLink to="/settings/audit">Audit log</NavLink> : null}
+      <NavLink to="/settings/integrations">Integrations</NavLink>
+      <NavLink to="/settings/billing">Billing</NavLink>
       <NavLink to="/settings/account">Account</NavLink>
     </nav>
   );
@@ -621,6 +631,367 @@ export function AccountPage() {
         onConfirm={() => signOutOthers.mutate()}
         onClose={() => setConfirmSignOut(false)}
       />
+    </>
+  );
+}
+
+const GB = 1024 ** 3;
+const bytes = (n: number) => (n >= GB ? `${(n / GB).toFixed(1)} GB` : `${Math.round(n / 1024 ** 2)} MB`);
+
+function UsageRow({
+  label,
+  used,
+  limit,
+  format = String,
+}: {
+  label: string;
+  used: number;
+  limit: number | null;
+  format?: (n: number) => string;
+}) {
+  if (limit === 0) {
+    return (
+      <div className="usage-row">
+        <div className="spread">
+          <span>{label}</span>
+          <span className="muted">Not included in this plan</span>
+        </div>
+      </div>
+    );
+  }
+  const pct = limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  return (
+    <div className="usage-row">
+      <div className="spread">
+        <span>{label}</span>
+        <span className="num muted">
+          {format(used)} {limit === null ? "· no limit" : `of ${format(limit)}`}
+        </span>
+      </div>
+      {limit !== null ? (
+        <div
+          className={pct >= 90 ? "meter full" : "meter"}
+          role="meter"
+          aria-label={label}
+          aria-valuemin={0}
+          aria-valuemax={limit}
+          aria-valuenow={Math.min(used, limit)}
+        >
+          <span style={{ width: `${pct}%` }} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Plan, usage and Stripe checkout/portal. Prices are shown by Stripe at checkout, never invented here. */
+export function BillingPage() {
+  const toast = useToast();
+  const [params] = useSearchParams();
+  const status = trpc.billing.status.useQuery();
+  const redirect = (r: { url: string }) => window.location.assign(r.url);
+  const checkout = trpc.billing.checkout.useMutation({ onSuccess: redirect, onError: toast.error });
+  const portal = trpc.billing.portal.useMutation({ onSuccess: redirect, onError: toast.error });
+  const result = params.get("checkout");
+  const d = status.data;
+
+  return (
+    <>
+      <PageHeader eyebrow="Settings" title="Billing" lede="Your plan, what it includes, and current usage." />
+      <SettingsTabs />
+      {result === "success" ? (
+        <div className="callout" role="status">
+          You returned from Stripe Checkout. The plan below changes only when Stripe confirms the payment to
+          FLOWOS, usually within a minute; reload to check.
+        </div>
+      ) : result === "cancelled" ? (
+        <div className="callout" role="status">
+          Checkout was cancelled; nothing was charged.
+        </div>
+      ) : null}
+      {status.error ? <ErrorState error={status.error} onRetry={() => void status.refetch()} /> : null}
+      {status.isLoading ? <SkeletonRows rows={4} /> : null}
+      {d ? (
+        <div className="stack" style={{ maxWidth: 760 }}>
+          <Panel title="Current plan">
+            <div className="spread" style={{ flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <div className="display" style={{ fontSize: 28 }}>
+                  {d.planName}
+                </div>
+                {d.subscription ? (
+                  <span className="muted">
+                    Subscription {d.subscription.status.replace("_", " ")}
+                    {d.subscription.currentPeriodEnd
+                      ? ` · ${d.subscription.cancelAtPeriodEnd ? "ends" : "renews"} ${formatDateTime(d.subscription.currentPeriodEnd)}`
+                      : ""}
+                  </span>
+                ) : !d.billingEnabled ? (
+                  <span className="muted">Billing is not enabled on this server: no limits apply.</span>
+                ) : null}
+              </div>
+              {d.canManage && d.billingEnabled && d.subscription ? (
+                <Button loading={portal.isPending} onClick={() => portal.mutate()}>
+                  Manage billing
+                </Button>
+              ) : null}
+            </div>
+            <div className="stack" style={{ marginTop: 16, gap: 12 }}>
+              <UsageRow
+                label="Members and open invitations"
+                used={d.usage.members + d.usage.pendingInvitations}
+                limit={d.limits.members}
+              />
+              <UsageRow label="Workflows" used={d.usage.workflows} limit={d.limits.workflows} />
+              <UsageRow
+                label="Document storage"
+                used={d.usage.storageBytes}
+                limit={d.limits.storageBytes}
+                format={bytes}
+              />
+              <UsageRow
+                label="Assistant requests this month"
+                used={d.usage.aiRequestsThisMonth}
+                limit={d.limits.aiRequestsPerMonth}
+              />
+            </div>
+            <p className="definition">
+              Included features:{" "}
+              {d.features.length
+                ? d.features.map((f) => FEATURE_LABELS[f]).join(", ")
+                : "none beyond the core product"}
+              .
+            </p>
+          </Panel>
+          {d.billingEnabled && d.purchasable.length > 0 && (!d.subscription || d.plan === "FREE") ? (
+            <Panel title="Upgrade">
+              <div className="grid two">
+                {d.purchasable.map((p) => (
+                  <div key={p.id} className="plan-card">
+                    <h3>{p.name}</h3>
+                    <ul className="plain">
+                      <li>
+                        {p.limits.members === null
+                          ? "Unlimited members"
+                          : `Up to ${p.limits.members} members`}
+                      </li>
+                      <li>
+                        {p.limits.workflows === null
+                          ? "Unlimited workflows"
+                          : `Up to ${p.limits.workflows} workflows`}
+                      </li>
+                      <li>
+                        {p.limits.storageBytes === null
+                          ? "Unlimited storage"
+                          : `${bytes(p.limits.storageBytes)} storage`}
+                      </li>
+                      <li>
+                        {p.limits.aiRequestsPerMonth === null
+                          ? "Unlimited assistant use"
+                          : `${p.limits.aiRequestsPerMonth.toLocaleString()} assistant requests / month`}
+                      </li>
+                      {p.features.map((f) => (
+                        <li key={f}>{FEATURE_LABELS[f]}</li>
+                      ))}
+                    </ul>
+                    {d.canManage ? (
+                      <Button
+                        variant="primary"
+                        loading={checkout.isPending && checkout.variables?.plan === p.id}
+                        disabled={checkout.isPending}
+                        onClick={() => checkout.mutate({ plan: p.id })}
+                      >
+                        Choose {p.name}
+                      </Button>
+                    ) : (
+                      <span className="faint">Only owners can change the plan.</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="definition">
+                The price is shown by Stripe before you pay. Payments are handled entirely by Stripe.
+              </p>
+            </Panel>
+          ) : null}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+type IntegrationRow = RouterOutputs["integrations"]["list"]["integrations"][number];
+
+function IntegrationCard({
+  item,
+  canManage,
+  usable,
+}: {
+  item: IntegrationRow;
+  canManage: boolean;
+  usable: boolean;
+}) {
+  const toast = useToast();
+  const utils = trpc.useUtils();
+  const [url, setUrl] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const refresh = () => utils.integrations.list.invalidate();
+  const connect = trpc.integrations.connect.useMutation({
+    onSuccess: async () => {
+      await refresh();
+      setUrl("");
+      setEditing(false);
+      toast.success(`${item.name} connected. Send a test message to check it.`);
+    },
+  });
+  const test = trpc.integrations.test.useMutation({
+    onSuccess: async () => {
+      await refresh();
+      toast.success("Test message sent.");
+    },
+    onError: async (err) => {
+      await refresh();
+      toast.error(err);
+    },
+  });
+  const disconnect = trpc.integrations.disconnect.useMutation({
+    onSuccess: async () => {
+      await refresh();
+      setConfirmRemove(false);
+      toast.success(`${item.name} disconnected.`);
+    },
+    onError: (err) => {
+      setConfirmRemove(false);
+      toast.error(err);
+    },
+  });
+  const c = item.connection;
+  const showForm = usable && canManage && item.availability === "available" && (!c || editing);
+
+  return (
+    <div className="plan-card">
+      <div className="spread" style={{ flexWrap: "wrap", gap: 8 }}>
+        <h3>{item.name}</h3>
+        {item.availability === "planned" ? (
+          <Badge tone="outline">Not available yet</Badge>
+        ) : c ? (
+          c.status === "active" ? (
+            <Badge tone="good">Connected</Badge>
+          ) : (
+            <Badge tone="critical">Delivery failing</Badge>
+          )
+        ) : (
+          <Badge>Not connected</Badge>
+        )}
+      </div>
+      <span className="muted">{item.description}</span>
+      {c ? (
+        <div className="faint" style={{ fontSize: 13 }}>
+          <span className="mono">{c.hint}</span>
+          {c.lastDeliveryAt ? ` · last message ${timeAgo(c.lastDeliveryAt)}` : " · no messages sent yet"}
+          {c.lastError ? <div style={{ color: "var(--critical)" }}>{c.lastError}</div> : null}
+        </div>
+      ) : null}
+      {showForm ? (
+        <form
+          className="form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            connect.mutate({ provider: item.id, webhookUrl: url });
+          }}
+        >
+          <TextField
+            label="Webhook URL"
+            type="url"
+            autoComplete="off"
+            spellCheck={false}
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            required
+            maxLength={2000}
+            help={item.setupHelp}
+            error={connect.error ? errorMessage(connect.error) : undefined}
+          />
+          <div className="row" style={{ justifyContent: "flex-end" }}>
+            {editing ? (
+              <Button type="button" variant="ghost" onClick={() => setEditing(false)}>
+                Cancel
+              </Button>
+            ) : null}
+            <Button type="submit" variant="primary" loading={connect.isPending}>
+              {c ? "Save" : "Connect"}
+            </Button>
+          </div>
+        </form>
+      ) : null}
+      {c && canManage && !editing ? (
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          <Button
+            size="sm"
+            loading={test.isPending}
+            disabled={!usable}
+            onClick={() => test.mutate({ provider: item.id })}
+          >
+            Send test message
+          </Button>
+          <Button size="sm" variant="ghost" disabled={!usable} onClick={() => setEditing(true)}>
+            Replace URL
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirmRemove(true)}>
+            Disconnect
+          </Button>
+        </div>
+      ) : null}
+      <ConfirmDialog
+        open={confirmRemove}
+        title={`Disconnect ${item.name}?`}
+        body="Workflows that post to it will fail until it is connected again."
+        confirmLabel="Disconnect"
+        danger
+        loading={disconnect.isPending}
+        onConfirm={() => disconnect.mutate({ provider: item.id })}
+        onClose={() => setConfirmRemove(false)}
+      />
+    </div>
+  );
+}
+
+export function IntegrationsPage() {
+  const list = trpc.integrations.list.useQuery();
+  const d = list.data;
+  const usable = Boolean(d?.serverConfigured && d.includedInPlan);
+  return (
+    <>
+      <PageHeader
+        eyebrow="Settings"
+        title="Integrations"
+        lede="Connect messaging tools so workflows can post to your team's channels. Only what is listed as available works today."
+      />
+      <SettingsTabs />
+      {list.error ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : null}
+      {list.isLoading ? <SkeletonRows rows={4} /> : null}
+      {d && !d.serverConfigured ? (
+        <div className="callout" role="status">
+          Integrations are not configured on this server: an administrator needs to set{" "}
+          <span className="mono">INTEGRATIONS_ENCRYPTION_KEY</span>.
+        </div>
+      ) : d && !d.includedInPlan ? (
+        <div className="callout" role="status">
+          Integrations are not included in your plan. An owner can change it in{" "}
+          <NavLink to="/settings/billing">Billing</NavLink>.
+        </div>
+      ) : null}
+      {d ? (
+        <>
+          <div className="grid two" style={{ maxWidth: 960 }}>
+            {d.integrations.map((item) => (
+              <IntegrationCard key={item.id} item={item} canManage={d.canManage} usable={usable} />
+            ))}
+          </div>
+          {!d.canManage ? <p className="faint">Only owners and admins can connect integrations.</p> : null}
+        </>
+      ) : null}
     </>
   );
 }

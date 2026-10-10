@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { EMPLOYEE_STATUSES, EMPLOYMENT_TYPES, TASK_PRIORITIES, TASK_STATUSES } from "./domain";
+import { MESSAGING_INTEGRATIONS } from "./integrations";
 
 /**
  * Workflow model: WHEN <trigger> IF <conditions> THEN <actions>.
@@ -91,6 +92,12 @@ export const actionSchema = z.discriminatedUnion("type", [
     recipient: z.enum(RECIPIENT_RULES).default("workflow_owner"),
     userId: z.string().uuid().nullable().default(null),
   }),
+  z.object({
+    type: z.literal("send_message"),
+    /** A connected messaging integration (Settings → Integrations). */
+    provider: z.enum(MESSAGING_INTEGRATIONS),
+    text: z.string().trim().min(1).max(1000),
+  }),
 ]);
 export type WorkflowAction = z.infer<typeof actionSchema>;
 export type ActionType = WorkflowAction["type"];
@@ -98,6 +105,7 @@ export type ActionType = WorkflowAction["type"];
 export const ACTION_LABELS: Record<ActionType, string> = {
   create_task: "Create a task",
   notify: "Send an in-app notification",
+  send_message: "Post a message to Slack or Teams",
 };
 
 export const ASSIGNEE_LABELS: Record<(typeof ASSIGNEE_RULES)[number], string> = {

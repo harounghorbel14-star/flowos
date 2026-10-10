@@ -8,6 +8,7 @@ import { audit } from "../../lib/audit";
 import { badRequest, conflict, forbidden, notFound } from "../../lib/errors";
 import { generateToken, hashToken } from "../../lib/tokens";
 import { notify } from "../notifications/service";
+import { assertWithinLimit } from "../billing/entitlements";
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -269,6 +270,8 @@ export async function createInvitation(db: Database, actor: Actor, input: { emai
           isNull(invitations.revokedAt),
         ),
       );
+    // Members plus open invitations must fit the plan.
+    await assertWithinLimit(tx, actor.orgId, "members");
     const token = generateToken();
     const [invite] = await tx
       .insert(invitations)
@@ -404,6 +407,8 @@ export async function acceptInvitation(
       )
       .returning({ id: invitations.id });
     if (!claimed) throw badRequest("This invitation has already been used.");
+    // Checked again on acceptance: the plan may have changed since the invitation was sent.
+    await assertWithinLimit(tx, invite.orgId, "members");
 
     const [existing] = await tx
       .select({ id: memberships.id })

@@ -71,6 +71,34 @@
       "when": 1791564941782,
       "tag": "0009_stabilization_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791566545731,
+      "tag": "0010_metric_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791579733310,
+      "tag": "0011_billing",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791580234107,
+      "tag": "0012_integrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791581333717,
+      "tag": "0013_billing_notifications",
+      "breakpoints": true
     }
   ]
 }

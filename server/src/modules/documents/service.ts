@@ -12,6 +12,7 @@ import { requireEmployee } from "../../lib/refs";
 import { safeFileName, sniff } from "../../storage/sniff";
 import { getStorage, newStorageKey } from "../../storage/storage";
 import { notify } from "../notifications/service";
+import { assertWithinLimit } from "../billing/entitlements";
 
 export const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
 export const EXPIRY_WARNING_DAYS = 14;
@@ -145,12 +146,15 @@ export async function uploadDocument(
       "Unsupported file type. Upload a PDF, image (PNG/JPEG), Office document or plain text file.",
     );
 
+  await assertWithinLimit(db, actor.orgId, "storage", data.length);
   const storageKey = newStorageKey();
   const storage = getStorage();
   await storage.put(storageKey, data);
   try {
     return await db.transaction(async (tx) => {
       await validateMeta(tx, actor, meta);
+      // Authoritative check under the organization lock (the early check above avoids storing bytes needlessly).
+      await assertWithinLimit(tx, actor.orgId, "storage", data.length);
       const [doc] = await tx
         .insert(documents)
         .values({

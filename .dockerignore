@@ -1,0 +1,10 @@
+.git
+node_modules
+dist
+coverage
+storage
+e2e/.artifacts
+*.log
+.env
+.env.*
+!.env.example

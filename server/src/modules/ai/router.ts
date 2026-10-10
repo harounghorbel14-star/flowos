@@ -3,7 +3,7 @@ import { orgProcedure, router } from "../../trpc/trpc";
 import * as assistant from "./assistant";
 
 export const aiRouter = router({
-  status: orgProcedure.query(() => assistant.aiStatus()),
+  status: orgProcedure.query(({ ctx }) => assistant.aiStatus(ctx.db, ctx.actor)),
   conversations: orgProcedure.query(({ ctx }) => assistant.listConversations(ctx.db, ctx.actor)),
   createConversation: orgProcedure
     .input(z.object({ title: z.string().max(120).optional() }))

@@ -205,4 +205,29 @@ describe("production boot", () => {
     expect(err).toContain("Missing required production configuration: APP_ORIGIN");
     expect(err).not.toContain("postgres://");
   }, 30_000);
+
+  it("the migration tool runs in production without the web server's settings", async () => {
+    const migrateFile = path.join(outDir!, "migrate.js");
+    await build({
+      entryPoints: [path.join(root, "server/src/db/migrate-cli.ts")],
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      target: "node22",
+      packages: "external",
+      outfile: migrateFile,
+      logLevel: "silent",
+    });
+    const proc = spawn(process.execPath, [migrateFile], {
+      cwd: root,
+      env: { PATH: process.env.PATH, NODE_ENV: "production", DATABASE_URL: process.env.DATABASE_URL },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    proc.stdout!.on("data", (d: Buffer) => (out += d.toString()));
+    proc.stderr!.on("data", (d: Buffer) => (out += d.toString()));
+    const [code] = (await once(proc, "exit")) as [number | null];
+    expect(out).toContain("Migrations applied.");
+    expect(code).toBe(0);
+  }, 30_000);
 });

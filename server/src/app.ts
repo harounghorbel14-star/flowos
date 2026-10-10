@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import { getDb } from "./db/client";
 import { env, isProduction } from "./env";
 import { aiHttpRouter } from "./modules/ai/http";
+import { billingWebhookRouter } from "./modules/billing/http";
 import { documentsHttpRouter } from "./modules/documents/http";
 import { createContext } from "./trpc/context";
 import { appRouter } from "./trpc/router";
@@ -102,6 +103,8 @@ export function createApp() {
   );
   app.use("/api/documents", documentsHttpRouter(csrfGuard));
   app.use("/api/ai", aiHttpRouter(csrfGuard));
+  // Server-to-server: authenticated by the Stripe signature, not by session or CSRF header.
+  app.use("/api/billing", billingWebhookRouter());
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Not found" });
   });

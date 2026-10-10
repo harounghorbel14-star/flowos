@@ -1,5 +1,7 @@
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
+import { metricSnapshots } from "../src/db/schema";
+import { recordDailySnapshots } from "../src/modules/insights/service";
 import { addMember, createOrg, db } from "./helpers";
 
 /** Monday 00:00 UTC of the ISO week `weeksAgo` weeks before the current one, plus `days`. */
@@ -102,5 +104,73 @@ describe("operational trends", () => {
     const r = await as(owner).insights.trends();
     expect(r.notable.map((n) => n.action)).toContain("project.created");
     expect(r.workflows!.failing).toEqual([]);
+  });
+
+  it("supports 4, 8 and 12 week ranges and rejects others", async () => {
+    const { owner, as } = await createOrg();
+    expect((await as(owner).insights.trends({ weeks: 4 })).weeks).toHaveLength(4);
+    expect((await as(owner).insights.trends({ weeks: 12 })).weeks).toHaveLength(12);
+    expect((await as(owner).insights.trends()).range).toBe(8);
+    // @ts-expect-error 5 is not an allowed range
+    await expect(as(owner).insights.trends({ weeks: 5 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("records daily snapshots and prefers measured overdue counts over reconstruction", async () => {
+    const { owner, org, as } = await createOrg();
+    const late = await as(owner).tasks.create({ title: "Late" });
+    await backdate(late.id, at(0, 0), sql`current_date - 1`);
+    await as(owner).tasks.create({ title: "Blocked", status: "BLOCKED" });
+
+    expect(await recordDailySnapshots(db())).toBeGreaterThanOrEqual(1);
+    expect(await recordDailySnapshots(db())).toBeGreaterThanOrEqual(1); // upsert, not duplicate
+    const rows = await db().select().from(metricSnapshots).where(eq(metricSnapshots.orgId, org.id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ openTasks: 2, overdueTasks: 1, blockedTasks: 1, pendingApprovals: 0 });
+
+    // A snapshot recorded on the last day of last week is used as measured history.
+    await db()
+      .insert(metricSnapshots)
+      .values({
+        orgId: org.id,
+        day: sql`(date_trunc('week', now()) - interval '1 day')::date` as unknown as string,
+        openTasks: 9,
+        overdueTasks: 7,
+        blockedTasks: 0,
+        pendingApprovals: 0,
+      });
+    const r = await as(owner).insights.trends();
+    const lastWeek = r.weeks[r.weeks.length - 2]!;
+    expect(lastWeek).toMatchObject({ overdue: 7, overdueSource: "measured" });
+    expect(r.weeks[r.weeks.length - 3]!.overdueSource).toBe("reconstructed");
+    // The current (partial) week is always live.
+    expect(r.weeks[r.weeks.length - 1]).toMatchObject({ overdue: 1, overdueSource: "reconstructed" });
+  });
+
+  it("breaks tasks down by the assignee's department", async () => {
+    const { owner, org, as } = await createOrg();
+    const ops = await as(owner).departments.create({ name: "Operations" });
+    const emp = await as(owner).employees.create({
+      firstName: "Dee",
+      lastName: "Partment",
+      email: `dee-${Date.now()}@example.test`,
+      departmentId: ops.id,
+    });
+    const t = await as(owner).tasks.create({ title: "Ops late", assigneeEmployeeId: emp.id });
+    await backdate(t.id, at(0, 0), sql`current_date - 2`);
+    await as(owner).tasks.create({ title: "Ops blocked", assigneeEmployeeId: emp.id, status: "BLOCKED" });
+    await as(owner).tasks.create({ title: "Nobody's" });
+    const done = await as(owner).tasks.create({ title: "Old done", assigneeEmployeeId: emp.id });
+    await as(owner).tasks.update({ id: done.id, status: "DONE" });
+
+    const r = await as(owner).insights.trends();
+    const byName = Object.fromEntries(r.departments!.map((d) => [d.name ?? "none", d]));
+    expect(byName.Operations).toMatchObject({ open: 2, overdue: 1, blocked: 1, completedRecent: 1 });
+    expect(byName.none).toMatchObject({ open: 1, overdue: 0 });
+
+    // Another organization's departments never appear.
+    const other = await createOrg();
+    const r2 = await other.as(other.owner).insights.trends();
+    expect(r2.departments!.some((d) => d.name === "Operations")).toBe(false);
+    void org;
   });
 });

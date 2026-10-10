@@ -20,6 +20,7 @@ import { personName } from "../../lib/format";
 import { errorMessage, trpc } from "../../lib/trpc";
 import { useToast } from "../toast";
 import { Button, enumOptions, Modal, SelectField, TextAreaField, TextField } from "../ui";
+import { integrationById, MESSAGING_INTEGRATIONS } from "@shared/integrations";
 
 export interface WorkflowFormValues {
   id?: string;
@@ -41,6 +42,7 @@ const NEW_ACTION: Record<WorkflowAction["type"], WorkflowAction> = {
     employeeId: null,
   },
   notify: { type: "notify", title: "", body: "", recipient: "workflow_owner", userId: null },
+  send_message: { type: "send_message", provider: "slack", text: "" },
 };
 
 export function WorkflowFormDialog(props: {
@@ -308,6 +310,23 @@ function Inner({
                     />
                   ) : null}
                 </div>
+              </>
+            ) : a.type === "send_message" ? (
+              <>
+                <SelectField
+                  label="Send to"
+                  value={a.provider}
+                  onChange={(e) => setAction(i, { provider: e.target.value as typeof a.provider })}
+                  options={MESSAGING_INTEGRATIONS.map((p) => ({ value: p, label: integrationById(p)!.name }))}
+                  help="The integration must be connected in Settings → Integrations."
+                />
+                <TextAreaField
+                  label="Message"
+                  rows={3}
+                  maxLength={1000}
+                  value={a.text}
+                  onChange={(e) => setAction(i, { text: e.target.value })}
+                />
               </>
             ) : (
               <>

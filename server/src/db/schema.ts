@@ -660,3 +660,113 @@ export const rateLimits = pgTable(
   },
   (t) => [index("rate_limits_reset_idx").on(t.resetAt)],
 );
+
+/**
+ * Daily operational measurements per organization, recorded by the worker
+ * (hourly upsert; a day's row holds the last measurement of that UTC day).
+ * Lets Insights show measured history instead of reconstructing it.
+ */
+export const metricSnapshots = pgTable(
+  "metric_snapshots",
+  {
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    day: date("day").notNull(),
+    openTasks: integer("open_tasks").notNull(),
+    overdueTasks: integer("overdue_tasks").notNull(),
+    blockedTasks: integer("blocked_tasks").notNull(),
+    pendingApprovals: integer("pending_approvals").notNull(),
+    measuredAt: timestamp("measured_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.day] })],
+);
+
+/** One row per organization that has (or had) a paid subscription; no row = Free. */
+export const subscriptions = pgTable(
+  "subscriptions",
+  {
+    orgId: uuid("org_id")
+      .primaryKey()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    plan: text("plan").$type<"TEAM" | "BUSINESS">().notNull(),
+    /** Stripe subscription status (active, trialing, past_due, canceled, unpaid, incomplete, …). */
+    status: text("status").notNull(),
+    stripeCustomerId: text("stripe_customer_id").notNull(),
+    stripeSubscriptionId: text("stripe_subscription_id").notNull(),
+    currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
+    cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+    /** `created` of the Stripe event last applied; older events are ignored (out-of-order delivery). */
+    lastEventCreatedAt: timestamp("last_event_created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("subscriptions_stripe_subscription_key").on(t.stripeSubscriptionId),
+    index("subscriptions_customer_idx").on(t.stripeCustomerId),
+  ],
+);
+
+/** Stripe customer per organization, created at first checkout. */
+export const billingCustomers = pgTable("billing_customers", {
+  orgId: uuid("org_id")
+    .primaryKey()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  stripeCustomerId: text("stripe_customer_id").notNull().unique(),
+  createdAt: createdAt(),
+});
+
+/** Every verified webhook event, keyed by the provider's event id: processing is idempotent. */
+export const webhookEvents = pgTable(
+  "webhook_events",
+  {
+    provider: text("provider").notNull(),
+    eventId: text("event_id").notNull(),
+    type: text("type").notNull(),
+    orgId: uuid("org_id"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    /** null = received but ignored (no matching organization or unhandled type). */
+    outcome: text("outcome").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.provider, t.eventId] })],
+);
+
+/**
+ * Operator-controlled per-organization feature overrides (beta access, kill
+ * switches). Not editable by organization members: set with `npm run flags`.
+ */
+export const featureFlags = pgTable(
+  "feature_flags",
+  {
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    feature: text("feature").notNull(),
+    enabled: boolean("enabled").notNull(),
+    reason: text("reason"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.feature] })],
+);
+
+/** One connection per organization and integration. The secret (webhook URL / token) is encrypted at rest. */
+export const integrationConnections = pgTable(
+  "integration_connections",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    /** AES-256-GCM sealed secret (see lib/crypto.ts); never returned by the API. */
+    secretSealed: text("secret_sealed").notNull(),
+    /** Non-secret description shown in the UI, e.g. "hooks.slack.com/…/a1b2". */
+    hint: text("hint").notNull(),
+    status: text("status").$type<"active" | "error">().notNull().default("active"),
+    lastError: text("last_error"),
+    lastDeliveryAt: timestamp("last_delivery_at", { withTimezone: true }),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("integration_connections_org_provider_key").on(t.orgId, t.provider)],
+);

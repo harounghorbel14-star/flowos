@@ -1,5 +1,5 @@
 import { TrendingUp } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ChartTable, ColumnChart, Legend, LineChart, type Series } from "../components/charts";
 import { Badge, EmptyState, ErrorState, PageHeader, Panel, SkeletonRows } from "../components/ui";
 import { formatDay, timeAgo } from "../lib/format";
@@ -37,8 +37,17 @@ function Delta({ current, previous }: { current: number; previous: number }) {
 
 const NOTABLE_LINK: Record<string, string> = { project: "/projects/", employee: "/people/" };
 
+const RANGES = [4, 8, 12] as const;
+type Range = (typeof RANGES)[number];
+
 export function InsightsPage() {
-  const q = trpc.insights.trends.useQuery(undefined, { refetchInterval: 120_000 });
+  const [params, setParams] = useSearchParams();
+  const asked = Number(params.get("weeks"));
+  const weeks: Range = (RANGES as readonly number[]).includes(asked) ? (asked as Range) : 8;
+  const q = trpc.insights.trends.useQuery(
+    { weeks },
+    { refetchInterval: 120_000, placeholderData: (prev) => prev },
+  );
 
   return (
     <>
@@ -46,6 +55,29 @@ export function InsightsPage() {
         eyebrow="Learn"
         title="Insights"
         lede="How work is moving, week by week. Every figure is measured from your organization’s records and says how it is calculated — these are facts, not predictions."
+        actions={
+          <div className="tabs" role="group" aria-label="Time range" style={{ marginBottom: 0 }}>
+            {RANGES.map((r) => (
+              <button
+                key={r}
+                type="button"
+                aria-pressed={weeks === r}
+                onClick={() =>
+                  setParams(
+                    (p) => {
+                      if (r === 8) p.delete("weeks");
+                      else p.set("weeks", String(r));
+                      return p;
+                    },
+                    { replace: true },
+                  )
+                }
+              >
+                {r} weeks
+              </button>
+            ))}
+          </div>
+        }
       />
       {q.error ? <ErrorState error={q.error} onRetry={() => void q.refetch()} /> : null}
       {q.isLoading ? (
@@ -114,7 +146,7 @@ function Body({ data }: { data: Data }) {
                 created: data.weeks.map((w) => w.created),
                 completed: data.weeks.map((w) => w.completed),
               }}
-              ariaLabel="Tasks created and completed per week, last 8 weeks"
+              ariaLabel={`Tasks created and completed per week, last ${n} weeks`}
             />
             <p className="definition">
               Created: {data.definitions.created} Completed: {data.definitions.completed} This week is
@@ -134,9 +166,17 @@ function Body({ data }: { data: Data }) {
               categories={cats}
               series={[{ ...INK, label: "Overdue" }]}
               values={{ v: data.weeks.map((w) => w.overdue) }}
-              ariaLabel="Open overdue tasks at the end of each week, last 8 weeks"
+              ariaLabel={`Open overdue tasks at the end of each week, last ${n} weeks`}
             />
-            <p className="definition">{data.definitions.overdue}</p>
+            <p className="definition">
+              {data.definitions.overdue}{" "}
+              {(() => {
+                const measured = data.weeks.filter((w) => w.overdueSource === "measured").length;
+                return measured === 0
+                  ? "No week in this range is measured yet; FLOWOS records the count daily from now on."
+                  : `${measured} of ${n - 1} past weeks measured.`;
+              })()}
+            </p>
             <ChartTable
               caption="Open overdue tasks at week end"
               categories={cats}
@@ -156,7 +196,7 @@ function Body({ data }: { data: Data }) {
               format={hours}
               minScale={1}
               ariaLabel="Median hours from submission to decision, per week"
-              emptyNote="No decisions in the last 8 weeks"
+              emptyNote={`No decisions in the last ${n} weeks`}
             />
             <p className="definition">
               {data.definitions.turnaround} Weeks without decisions are left as gaps. {data.approvals.pending}{" "}
@@ -195,7 +235,7 @@ function Body({ data }: { data: Data }) {
                 />
               ) : (
                 <p className="muted" style={{ margin: 0 }}>
-                  No workflow runs in the last 8 weeks.
+                  No workflow runs in the last {n} weeks.
                 </p>
               )}
               <h3 style={{ marginTop: 16 }}>Failures in the last 30 days</h3>
@@ -226,6 +266,55 @@ function Body({ data }: { data: Data }) {
             </Panel>
           ) : null}
         </div>
+      ) : null}
+
+      {data.departments && data.departments.length > 0 ? (
+        <Panel title="Tasks by department" flush>
+          <div className="table-wrap">
+            <table className="data">
+              <caption className="sr-only">
+                Open, overdue and blocked tasks by the assignee&apos;s department
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Department</th>
+                  <th scope="col" className="num">
+                    Open
+                  </th>
+                  <th scope="col" className="num">
+                    Overdue
+                  </th>
+                  <th scope="col" className="num">
+                    Blocked
+                  </th>
+                  <th scope="col" className="num">
+                    Completed · 7 days
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.departments.map((d) => (
+                  <tr key={d.id ?? "none"}>
+                    <th scope="row">
+                      {d.id ? (
+                        <Link to={`/people?department=${d.id}`}>{d.name}</Link>
+                      ) : (
+                        <span className="muted">No department or unassigned</span>
+                      )}
+                    </th>
+                    <td className="num">{d.open}</td>
+                    <td className="num">{d.overdue > 0 ? <Badge tone="critical">{d.overdue}</Badge> : 0}</td>
+                    <td className="num">{d.blocked > 0 ? <Badge tone="attention">{d.blocked}</Badge> : 0}</td>
+                    <td className="num">{d.completedRecent}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="definition" style={{ padding: "0 16px 12px" }}>
+            {data.definitions.departments}
+          </p>
+        </Panel>
       ) : null}
 
       <Panel title="Notable changes this week" flush>

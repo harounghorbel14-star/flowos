@@ -1,6 +1,17 @@
 import { sql } from "drizzle-orm";
 import type { Database } from "../../db/client";
-import { approvalRequests, auditEvents, tasks, users, workflowRuns, workflows } from "../../db/schema";
+import {
+  approvalRequests,
+  auditEvents,
+  departments,
+  employees,
+  metricSnapshots,
+  organizations,
+  tasks,
+  users,
+  workflowRuns,
+  workflows,
+} from "../../db/schema";
 import { assertCan, can, type Actor } from "../../lib/actor";
 
 /**
@@ -13,7 +24,9 @@ export const DEFINITIONS = {
   completed:
     "Tasks whose current completion date falls in the week. A task reopened later no longer counts; deleted tasks are not included.",
   overdue:
-    "Open tasks past their due date at the end of each week (or now, for the current week), reconstructed from today's records: creation, due and completion dates. Tasks deleted since are not included.",
+    "Open tasks past their due date at the end of each week (or now, for the current week). Weeks marked measured use the count recorded by FLOWOS at the end of that week; other weeks are reconstructed from today's records (creation, due and completion dates), which misses tasks deleted since.",
+  departments:
+    "Tasks by the department of their assignee, as of now. Open = not done; overdue = open and past due; completed = finished in the last 7 days.",
   turnaround:
     "Median hours from submission to decision for approval requests decided in the week (cancelled requests excluded).",
   workflowRuns:
@@ -22,15 +35,17 @@ export const DEFINITIONS = {
     "Last 7 days compared with the 7 days before; rolling windows avoid comparing a partial week to a full one.",
 } as const;
 
-const WEEKS = 8;
+export const WEEK_RANGES = [4, 8, 12] as const;
+export type WeekRange = (typeof WEEK_RANGES)[number];
 
 type Row = Record<string, unknown>;
 const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
 const numOrNull = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
-export async function operationalTrends(db: Database, actor: Actor) {
+export async function operationalTrends(db: Database, actor: Actor, opts: { weeks?: WeekRange } = {}) {
   assertCan(actor, "task:read");
   const org = actor.orgId;
+  const WEEKS: WeekRange = opts.weeks ?? 8;
 
   // Series of week starts, oldest first, ending with the current (partial) week.
   const weeksCte = sql`weeks as (
@@ -52,7 +67,11 @@ export async function operationalTrends(db: Database, actor: Actor) {
          where t.org_id = ${org}
            and t.created_at <= least(w.week_start + interval '1 week', now())
            and t.due_date < (least(w.week_start + interval '1 week', now()))::date
-           and (t.completed_at is null or t.completed_at > least(w.week_start + interval '1 week', now()))) as overdue
+           and (t.completed_at is null or t.completed_at > least(w.week_start + interval '1 week', now()))) as overdue,
+      -- Measured value recorded on the week's last day (past weeks only).
+      (select s.overdue_tasks from ${metricSnapshots} s
+        where s.org_id = ${org} and s.day = (w.week_start + interval '6 days')::date
+          and w.week_start + interval '1 week' <= now()) as overdue_measured
     from weeks w order by w.week_start`);
 
   const rollingQ = db.execute<Row>(sql`
@@ -123,20 +142,58 @@ export async function operationalTrends(db: Database, actor: Actor) {
       and e.action in ('project.created', 'project.status_changed', 'employee.created', 'employee.status_changed', 'department.created')
     order by e.created_at desc limit 10`);
 
-  const [throughput, rolling, approvals, approvalsRolling, workflowWeeks, failing, notable] =
-    await Promise.all([throughputQ, rollingQ, approvalsQ, approvalsRollingQ, workflowsQ, failingQ, notableQ]);
+  const departmentsQ = can(actor, "employee:read")
+    ? db.execute<Row>(sql`
+        select d.id, d.name,
+          count(*) filter (where t.status <> 'DONE') as open,
+          count(*) filter (where t.status <> 'DONE' and t.due_date < current_date) as overdue,
+          count(*) filter (where t.status = 'BLOCKED') as blocked,
+          count(*) filter (where t.completed_at >= now() - interval '7 days') as completed_recent
+        from ${tasks} t
+        left join ${employees} e on e.org_id = t.org_id and e.id = t.assignee_employee_id
+        left join ${departments} d on d.org_id = e.org_id and d.id = e.department_id
+        where t.org_id = ${org}
+          and (t.status <> 'DONE' or t.completed_at >= now() - interval '7 days')
+        group by d.id, d.name
+        order by overdue desc, open desc, d.name nulls last`)
+    : Promise.resolve(null);
+
+  const [throughput, rolling, approvals, approvalsRolling, workflowWeeks, failing, notable, departmentRows] =
+    await Promise.all([
+      throughputQ,
+      rollingQ,
+      approvalsQ,
+      approvalsRollingQ,
+      workflowsQ,
+      failingQ,
+      notableQ,
+      departmentsQ,
+    ]);
 
   const r = rolling.rows[0] ?? {};
   const ar = approvalsRolling?.rows[0];
   return {
     generatedAt: new Date(),
     definitions: DEFINITIONS,
+    range: WEEKS,
     weeks: throughput.rows.map((row) => ({
       week: String(row.week),
       created: num(row.created),
       completed: num(row.completed),
-      overdue: num(row.overdue),
+      overdue: row.overdue_measured === null ? num(row.overdue) : num(row.overdue_measured),
+      overdueSource: (row.overdue_measured === null ? "reconstructed" : "measured") as
+        "measured" | "reconstructed",
     })),
+    departments: departmentRows
+      ? departmentRows.rows.map((row) => ({
+          id: row.id ? String(row.id) : null,
+          name: row.name ? String(row.name) : null,
+          open: num(row.open),
+          overdue: num(row.overdue),
+          blocked: num(row.blocked),
+          completedRecent: num(row.completed_recent),
+        }))
+      : null,
     rolling: {
       created: { current: num(r.created_now), previous: num(r.created_prev) },
       completed: { current: num(r.completed_now), previous: num(r.completed_prev) },
@@ -178,4 +235,28 @@ export async function operationalTrends(db: Database, actor: Actor) {
       actorName: row.actor_name ? String(row.actor_name) : null,
     })),
   };
+}
+
+/**
+ * Record today's measurements for every organization (upsert, so the row
+ * ends up holding the last measurement of the UTC day). Called hourly by the
+ * worker. Returns the number of organizations measured.
+ */
+export async function recordDailySnapshots(db: Database): Promise<number> {
+  const result = await db.execute(sql`
+    insert into ${metricSnapshots} (org_id, day, open_tasks, overdue_tasks, blocked_tasks, pending_approvals, measured_at)
+    select o.id, current_date,
+      (select count(*) from ${tasks} t where t.org_id = o.id and t.status <> 'DONE'),
+      (select count(*) from ${tasks} t where t.org_id = o.id and t.status <> 'DONE' and t.due_date < current_date),
+      (select count(*) from ${tasks} t where t.org_id = o.id and t.status = 'BLOCKED'),
+      (select count(*) from ${approvalRequests} a where a.org_id = o.id and a.status = 'PENDING'),
+      now()
+    from ${organizations} o
+    on conflict (org_id, day) do update set
+      open_tasks = excluded.open_tasks,
+      overdue_tasks = excluded.overdue_tasks,
+      blocked_tasks = excluded.blocked_tasks,
+      pending_approvals = excluded.pending_approvals,
+      measured_at = excluded.measured_at`);
+  return result.rowCount ?? 0;
 }

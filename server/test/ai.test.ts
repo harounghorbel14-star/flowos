@@ -77,7 +77,7 @@ describe("AI assistant", () => {
   it("reports itself as not configured without a provider", async () => {
     const { owner, as } = await createOrg();
     setAiProvider(null);
-    expect(await as(owner).ai.status()).toEqual({ configured: false, model: null });
+    expect(await as(owner).ai.status()).toEqual({ configured: false, model: null, includedInPlan: true });
     const c = await as(owner).ai.createConversation({});
     await expect(
       runTurn(db(), await actorFor(owner, (await as(owner).orgs.current()).id), c.id, "hi", () => {}, null),

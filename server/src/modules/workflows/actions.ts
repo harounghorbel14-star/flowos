@@ -8,6 +8,9 @@ import { AppError } from "../../lib/errors";
 import { requireEmployee, requireMember } from "../../lib/refs";
 import { notify } from "../notifications/service";
 import { createTask } from "../tasks/service";
+import { getEntitlements } from "../billing/entitlements";
+import { sendMessage } from "../integrations/service";
+import { DeliveryError } from "../integrations/transport";
 
 /** An error that retrying cannot fix (e.g. a referenced record no longer exists). */
 export class PermanentError extends Error {
@@ -105,6 +108,26 @@ export async function executeAction(
         link: "/workflows",
       });
       return { delivered: true, userId };
+    }
+    case "send_message": {
+      const entitlements = await getEntitlements(tx, actor.orgId);
+      if (!entitlements.features.includes("integrations")) {
+        throw new PermanentError("Integrations are not included in this organization's plan.");
+      }
+      try {
+        // External side effect: delivered at least once. If the process dies after the post but
+        // before this step is recorded, a retry posts the message again.
+        await sendMessage(
+          tx,
+          actor.orgId,
+          action.provider,
+          renderTemplate(action.text, payload).slice(0, 3000),
+        );
+      } catch (err) {
+        if (err instanceof DeliveryError && !err.retryable) throw new PermanentError(err.message);
+        throw err;
+      }
+      return { delivered: true, provider: action.provider };
     }
     default:
       throw new PermanentError(`Unknown action type “${(action as { type: string }).type}”.`);

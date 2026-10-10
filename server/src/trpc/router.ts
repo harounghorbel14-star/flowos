@@ -2,11 +2,13 @@ import { aiRouter } from "../modules/ai/router";
 import { approvalsRouter } from "../modules/approvals/router";
 import { auditRouter } from "../modules/audit/router";
 import { authRouter } from "../modules/auth/router";
+import { billingRouter } from "../modules/billing/router";
 import { dashboardRouter } from "../modules/dashboard/router";
 import { departmentsRouter } from "../modules/departments/router";
 import { documentsRouter } from "../modules/documents/router";
 import { employeesRouter } from "../modules/employees/router";
 import { insightsRouter } from "../modules/insights/router";
+import { integrationsRouter } from "../modules/integrations/router";
 import { notificationsRouter } from "../modules/notifications/router";
 import { orgsRouter } from "../modules/orgs/router";
 import { projectsRouter } from "../modules/projects/router";
@@ -31,6 +33,8 @@ export const appRouter = router({
   documents: documentsRouter,
   ai: aiRouter,
   insights: insightsRouter,
+  billing: billingRouter,
+  integrations: integrationsRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -310,9 +310,8 @@ export function AssistantPage() {
   const toast = useToast();
   const utils = trpc.useUtils();
   const status = trpc.ai.status.useQuery();
-  const conversations = trpc.ai.conversations.useQuery(undefined, {
-    enabled: status.data?.configured === true,
-  });
+  const usable = status.data?.configured === true && status.data.includedInPlan;
+  const conversations = trpc.ai.conversations.useQuery(undefined, { enabled: usable });
   const create = trpc.ai.createConversation.useMutation({
     onSuccess: async (c) => {
       await utils.ai.conversations.invalidate();
@@ -338,7 +337,7 @@ export function AssistantPage() {
         title="Assistant"
         lede="Ask questions about live operational data. It sees only what you can see, and every change waits for your confirmation."
         actions={
-          status.data?.configured ? (
+          usable ? (
             <Button variant="primary" loading={create.isPending} onClick={() => create.mutate({})}>
               <MessageSquarePlus aria-hidden /> New conversation
             </Button>
@@ -356,7 +355,14 @@ export function AssistantPage() {
           </EmptyState>
         </div>
       ) : null}
-      {status.data?.configured ? (
+      {status.data?.configured && !status.data.includedInPlan ? (
+        <div className="panel">
+          <EmptyState icon={<Sparkles size={18} />} title="The assistant is not included in your plan">
+            An owner can change the plan in <Link to="/settings/billing">Settings → Billing</Link>.
+          </EmptyState>
+        </div>
+      ) : null}
+      {usable ? (
         <div className="grid assistant-layout">
           <Panel title="Conversations" flush>
             {conversations.data && conversations.data.length === 0 ? (

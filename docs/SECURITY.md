@@ -136,12 +136,37 @@ cannot execute writes without the user's confirmation.
   Slack, Stripe and Google keys and PEM private keys found no other credential.
   The only `.env*` file ever tracked is `.env.example`.
 
+## Billing and integrations
+
+- **Stripe webhooks** are authenticated by the signature over the raw body (Stripe SDK, 300 s tolerance) and are not CSRF-guarded; unverifiable requests get 400 and nothing is recorded. Each event id is stored in the same transaction as its effect (redelivery is a no-op; a failed event leaves nothing and Stripe retries). Subscription events are treated as signals: the current subscription is read back from Stripe and stored, so event order and duplicates cannot roll state back. An organization id claimed by an event is used only if the Stripe customer belongs to it (`billing.test.ts`).
+- **Checkout/portal**: owners only (`billing:manage`); redirect URLs come from `APP_ORIGIN` only; checkout is refused when an open subscription exists in FLOWOS or at Stripe; if two subscriptions become active anyway, the active one is never replaced or downgraded and owners are alerted. Plan limits and features are enforced in the services under a per-organization row lock (no count-then-insert race). Feature flags are operator-only.
+- **Integration secrets** (webhook URLs) are AES-256-GCM encrypted with `INTEGRATIONS_ENCRYPTION_KEY`, bound to their organization and provider (AAD), with 16-byte tags; never returned by the API (a hint is shown) or logged.
+- **SSRF**: webhook URLs must be HTTPS on 443 to the provider's own hosts; at send time the host is resolved once, every address must be public (no loopback, private, link-local/metadata, CGNAT, multicast, IPv4-mapped), the connection is pinned to that address, IP-literal hosts are refused and redirects are never followed (`integrations.test.ts`, real DNS and TLS).
+- Only admins and owners (`integration:manage`) connect, test or disconnect; 10 such calls per organization per minute; all audited. Delivery errors never echo the provider's response.
+
+### Security audit of the Phase K code (independent review, all addressed)
+
+| #   | Severity | Finding                                                                               | Status                                                                                                          |
+| --- | -------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| 1   | Medium   | A second live subscription could be created, and cancelling either downgraded the org | Fixed: checkout checks Stripe; duplicates never replace/downgrade the active one; owners alerted                |
+| 2   | Medium   | Event ordering wrong on equal timestamps / late retries                               | Fixed: state re-read from Stripe on every subscription event                                                    |
+| 3   | Medium   | Unknown price (rotation, add-on first) dropped even cancellations                     | Fixed: all items scanned, legacy prices, status always applied to a known subscription                          |
+| 4   | Medium   | One tenant's slow webhook could stall the shared worker (10 s, inside a transaction)  | Mitigated: 5 s timeout, rate limit; residual risk documented (deliveries still run in the step transaction)     |
+| 5   | Low      | Unbounded response body read                                                          | Fixed: body discarded unread                                                                                    |
+| 6   | Low      | Limit checks raced (count then insert)                                                | Fixed: organization row lock; reproduced by a test that fails without it                                        |
+| 7   | Low      | Failed/aborted assistant requests not counted in the quota                            | Fixed: every request counts                                                                                     |
+| 8   | Low      | Delivery failures from workflows rolled back, never shown                             | Fixed: recorded outside the step transaction                                                                    |
+| 9   | Low      | No IP check after DNS resolution                                                      | Fixed: resolved addresses checked and pinned                                                                    |
+| 10  | Low      | Markdown link injection in Teams messages                                             | Fixed: plain TextRun                                                                                            |
+| 11  | Low      | Crypto: tag length, no AAD, malformed key → 500                                       | Fixed (key rotation not implemented: losing or changing the key requires reconnecting integrations)             |
+| 12  | Low      | Stale Stripe customer, webhook_events never purged, over-limit data after downgrade   | Purge added (90 days); a deleted Stripe customer and over-limit data after downgrade are documented limitations |
+
 ## Dependency audit
 
 `npm audit` reports 4 moderate advisories, all in `drizzle-kit`'s bundled
 `@esbuild-kit` (esbuild dev-server CORS issue, GHSA-67mh-4wv8-2f99). drizzle-kit
 is a dev-only CLI that does not run the affected dev server. Runtime
-dependencies report no known vulnerabilities.
+dependencies (including `stripe` 22.6.2, pinned) report no known vulnerabilities.
 
 ## Known gaps (not yet implemented)
 

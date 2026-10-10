@@ -71,7 +71,8 @@ jobs:
         env:
           NODE_ENV: production
         run: |
-          node dist/server/index.js > server.log 2>&1 &
+          # A throwaway key generated per run, so the integrations flow is exercised.
+          INTEGRATIONS_ENCRYPTION_KEY="$(openssl rand -base64 32)" node dist/server/index.js > server.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://localhost:3000/api/health && exit 0; sleep 1; done
           cat server.log; exit 1
       - run: npm run test:e2e
@@ -82,3 +83,31 @@ jobs:
         with:
           name: e2e-screenshots
           path: e2e/.artifacts
+
+  image:
+    name: Container image (build, migrate, start)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          for i in $(seq 1 20); do pg_isready -h localhost -q && break; sleep 1; done
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "create role flowos login password 'flowos'"
+          sudo -u postgres createdb -O flowos flowos
+      # Base image from the ECR Public mirror of the official image (Docker Hub rate-limits anonymous pulls).
+      - name: Build image
+        run: docker build --build-arg NODE_IMAGE=public.ecr.aws/docker/library/node:22-bookworm-slim -t flowos:ci .
+      - name: Migrate, start and check readiness
+        env:
+          DATABASE_URL: postgres://flowos:flowos@127.0.0.1:5432/flowos
+        run: |
+          docker run --rm --network host -e DATABASE_URL flowos:ci node dist/server/migrate.js
+          docker run -d --name flowos --network host -e DATABASE_URL -e PORT=3000 -e APP_ORIGIN=http://localhost:3000 flowos:ci
+          for i in $(seq 1 30); do curl -sf http://localhost:3000/api/ready && break; sleep 1; done
+          curl -sf http://localhost:3000/api/ready
+          curl -sf -o /dev/null http://localhost:3000/
+          docker stop -t 15 flowos
+          docker logs flowos 2>&1 | tee container.log
+          grep -q "Shutdown complete." container.log
