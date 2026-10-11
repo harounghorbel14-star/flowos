@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { label } from "@shared/domain";
 import { useOrg } from "../lib/session";
@@ -56,9 +57,10 @@ export function Shell() {
   );
   const logout = trpc.auth.logout.useMutation({
     onSuccess: () => {
-      // Drop every cached record, then mark the session gone and leave.
+      // Mark the session gone and let the signed-in UI unmount first (synchronously), so its
+      // polled queries cannot refetch against the revoked session; then drop every cached record.
+      flushSync(() => utils.auth.me.setData(undefined, null));
       queryClient.clear();
-      utils.auth.me.setData(undefined, null);
       navigate("/login", { replace: true });
     },
     onError: toast.error,
