@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import pg from "pg";
 import { afterAll } from "vitest";
 import { loginLimiter, signupLimiter } from "../src/auth/rateLimit";
 import { closeDb, getDb } from "../src/db/client";
+import { MIGRATIONS_FOLDER } from "../src/db/schema-status";
 import type { Context } from "../src/trpc/context";
 import { createCaller } from "../src/trpc/router";
 
@@ -104,4 +108,19 @@ export async function createScratchDatabase(suffix: string) {
       await c.end();
     },
   };
+}
+
+export const migrationJournal = JSON.parse(
+  readFileSync(path.join(MIGRATIONS_FOLDER, "meta/_journal.json"), "utf8"),
+) as { entries: Array<{ tag: string }> };
+
+/** A copy of the migrations folder holding only the first `count` migrations (an older release). */
+export function olderMigrations(count: number): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "flowos-migrations-"));
+  cpSync(MIGRATIONS_FOLDER, dir, { recursive: true });
+  writeFileSync(
+    path.join(dir, "meta/_journal.json"),
+    JSON.stringify({ ...migrationJournal, entries: migrationJournal.entries.slice(0, count) }),
+  );
+  return dir;
 }

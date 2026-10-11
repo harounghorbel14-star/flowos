@@ -5,7 +5,7 @@ import { closeDb } from "./client";
 import { runMigrations } from "./migrate";
 
 runMigrations()
-  .then(() => console.log("Migrations applied."))
+  .then((applied) => console.log(`Migrations applied. ${applied ? `${applied} new.` : "None were pending."}`))
   .catch((err: unknown) => {
     console.error("Migration failed:", err instanceof Error ? err.message : err);
     process.exitCode = 1;
