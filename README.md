@@ -45,6 +45,7 @@ Full instructions, configuration and the production checklist:
 - [Running and deploying](docs/DEPLOYMENT.md)
 - [Web app testing guide](docs/WEB_TESTING_GUIDE.md)
 - [Staging deployment](docs/STAGING.md)
+- [Feature audit](docs/FEATURE_AUDIT.md)
 
 ## Checks
 

@@ -24,8 +24,9 @@ export async function createContext({ req, res }: { req: Request; res: Response 
     secure: isProduction(),
     path: "/",
   };
-  if (auth && token) {
-    // Keep the cookie lifetime aligned with a (possibly renewed) session.
+  if (auth?.renewed && token) {
+    // Only when the expiry moved: re-sending it on every response let a request still in
+    // flight during sign-out put the (revoked) cookie back in the browser.
     res.cookie(SESSION_COOKIE, token, { ...cookieOptions, expires: auth.expiresAt });
   }
   const orgHeader = req.header("x-flowos-org");

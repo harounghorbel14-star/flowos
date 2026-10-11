@@ -178,5 +178,5 @@ dependencies (including `stripe` 22.6.2, pinned) report no known vulnerabilities
 - **No account deletion / data export** (GDPR workflows). Note: user deletion is currently blocked by the append-only audit trigger (actor reference) — a dedicated anonymization path is required.
 - **No row-level security in Postgres**; isolation relies on service scoping plus composite FKs.
 - **No malware scanning** of uploads.
-- **Sessions**: 30-day sliding expiry capped at 90 days from sign-in; changing the password or "Sign out other devices" revokes every other session (`hardening.test.ts`). There is no per-device session list.
+- **Sessions**: 30-day sliding expiry capped at 90 days from sign-in; changing the password or "Sign out other devices" revokes every other session (`hardening.test.ts`). The cookie is re-sent only when a request renews the session, so a response still in flight at sign-out cannot restore it (`http.test.ts`). There is no per-device session list.
 - Penetration testing and a third-party review have not been performed.
