@@ -31,7 +31,9 @@ npm run test:live    # assistant against the real Anthropic API (needs ANTHROPIC
 
 Integration tests need a disposable database whose name contains `test`
 (default `postgres://flowos:flowos@localhost:5432/flowos_test`, override with
-`TEST_DATABASE_URL`). **The test setup drops and recreates its schema.**
+`TEST_DATABASE_URL`). **The test setup drops and recreates its schema.** The
+role needs `CREATEDB`: the migration tests create and drop scratch databases
+named `<test database>_*`.
 
 The E2E test drives Chromium through a two-user scenario. Start the app first
 (`npm run dev`, or `npm start` and set `E2E_BASE_URL=http://localhost:3000`).
@@ -83,7 +85,9 @@ private `FLOWOS_DEMO_PASSWORD` of 16+ characters are set (the documented local
 demo password is rejected there); never seed a database used by real people. Manual browser tests: [WEB_TESTING_GUIDE.md](WEB_TESTING_GUIDE.md).
 
 The server serves the built client and the API from one origin. The server
-never migrates at boot unless `FLOWOS_MIGRATE_ON_START=true`. Verified
+never migrates at boot unless `FLOWOS_MIGRATE_ON_START=true`, and it refuses to
+start (exit 1, naming the fix) when the database lacks any of this version's
+migrations; `/api/ready` is 503 (`database schema not migrated`) in that state. Verified
 locally from a clean checkout, the way CI runs it: `npm ci`, `npm run build`,
 `npm run db:migrate`, then `NODE_ENV=production node dist/server/index.js`.
 The 25-step browser E2E passes, the onboarding workflow run completes in the

@@ -9,7 +9,7 @@ import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ONBOARDING_TEMPLATE } from "@shared/workflows";
 import { tasks } from "../src/db/schema";
-import { addMember, createOrg, db } from "./helpers";
+import { addMember, createOrg, createScratchDatabase, db } from "./helpers";
 
 /**
  * Boots the server the way production does: one esbuild bundle (same flags as
@@ -38,6 +38,15 @@ async function freePort(): Promise<number> {
   const { port } = srv.address() as { port: number };
   srv.close();
   return port;
+}
+
+/** Spawn the bundled server and collect its output. */
+function startServer(env: NodeJS.ProcessEnv) {
+  const proc = spawn(process.execPath, [outfile], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
+  const log = { text: "" };
+  proc.stdout!.on("data", (d: Buffer) => (log.text += d.toString()));
+  proc.stderr!.on("data", (d: Buffer) => (log.text += d.toString()));
+  return { proc, log };
 }
 
 async function waitFor<T>(fn: () => Promise<T | undefined>, ms: number, what: string): Promise<T> {
@@ -205,6 +214,61 @@ describe("production boot", () => {
     expect(err).toContain("Missing required production configuration: APP_ORIGIN");
     expect(err).not.toContain("postgres://");
   }, 30_000);
+
+  it("refuses to start against a database whose migrations have not run", async () => {
+    // Regression: a deploy without the migration step served traffic, /api/ready said ok,
+    // and every worker tick failed with 42P01 (undefined table).
+    const scratch = await createScratchDatabase("boot_unmigrated");
+    try {
+      const port = await freePort();
+      const { proc, log } = startServer({ ...childEnv(port), DATABASE_URL: scratch.url });
+      const exited = once(proc, "exit");
+      const outcome = await Promise.race([
+        exited.then(([code]) => code as number | null),
+        new Promise<"still running">((r) => setTimeout(() => r("still running"), 15_000)),
+      ]);
+      if (outcome === "still running") {
+        proc.kill("SIGTERM");
+        await exited;
+      }
+      expect(log.text).not.toContain("worker tick failed");
+      expect(outcome).toBe(1);
+      expect(log.text).toContain("Database schema is behind this version");
+      expect(log.text).toContain("node dist/server/migrate.js");
+      expect(log.text).not.toContain("postgres://");
+    } finally {
+      await scratch.drop();
+    }
+  }, 30_000);
+
+  it("with FLOWOS_MIGRATE_ON_START=true it migrates an empty database and the worker runs cleanly", async () => {
+    const scratch = await createScratchDatabase("boot_migrate_on_start");
+    try {
+      const port = await freePort();
+      const { proc, log } = startServer({
+        ...childEnv(port),
+        DATABASE_URL: scratch.url,
+        FLOWOS_MIGRATE_ON_START: "true",
+      });
+      try {
+        await waitFor(
+          async () => ((await fetch(`http://localhost:${port}/api/ready`)).ok ? true : undefined),
+          20_000,
+          "readiness after migrating on start",
+        );
+        // First tick runs the worker, housekeeping and the metric snapshot; give it two ticks.
+        await new Promise((r) => setTimeout(r, 4500));
+        expect(log.text).not.toContain("worker tick failed");
+      } finally {
+        const exited = once(proc, "exit");
+        proc.kill("SIGTERM");
+        const [code] = (await exited) as [number | null];
+        expect(code).toBe(0);
+      }
+    } finally {
+      await scratch.drop();
+    }
+  }, 45_000);
 
   it("the migration tool runs in production without the web server's settings", async () => {
     const migrateFile = path.join(outDir!, "migrate.js");

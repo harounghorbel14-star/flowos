@@ -1,23 +1,27 @@
 # Staging deployment
 
-**Status: not deployed.** Nothing in this document has been run against a
-hosting provider. The container image and the release steps below were
-verified locally (Docker + PostgreSQL 16: migrate, seed, start, readiness,
-the 29-step browser E2E, uploads on the volume, graceful stop) and are built
-and started in CI on every pull request.
+**Status: deployed by the owner on Render at `https://follow-cm4i.onrender.com`
+(reported on 2026-10-11; not reachable from the build environment, so not
+verified from here).** Its logs showed `worker tick failed: database query
+failed` / `database error 42P01`: the database had not been migrated (see
+[Fixing a deployment whose migrations did not run](#fixing-a-deployment-whose-migrations-did-not-run)).
+The container image and the release steps below were verified locally
+(Docker + PostgreSQL 16: migrate, seed, start, readiness, the 29-step browser
+E2E, uploads on the volume, graceful stop) and are built and started in CI on
+every pull request.
 
 ## What staging needs (from the code)
 
-| Need                                              | Why                                                                                                        | Where in the code                   |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| One container running `node dist/server/index.js` | serves the API, the built client and the background worker in one process                                  | `server/src/index.ts`, `Dockerfile` |
-| PostgreSQL ≥ 15 (16 recommended)                  | all data; column-list `ON DELETE SET NULL` needs 15+                                                       | `drizzle/*.sql`                     |
-| A **persistent disk** mounted at `/data`          | uploaded documents are stored on local disk (`STORAGE_DIR=/data/storage`); there is no S3 adapter yet      | `server/src/storage/storage.ts`     |
-| **Exactly one instance**                          | local-disk storage is not shared between instances (the worker itself is safe to run on several)           | —                                   |
-| A release step before each new version            | migrations are never applied at boot                                                                       | `dist/server/migrate.js`            |
-| Health checks on `/api/ready`                     | 200 when the database answers, 503 when it does not or while shutting down; `/api/health` is liveness only | `server/src/app.ts`                 |
-| ≥ 10 s for shutdown                               | the server drains requests and the worker on `SIGTERM`                                                     | `server/src/index.ts`               |
-| HTTPS in front                                    | cookies are `Secure` in production                                                                         | —                                   |
+| Need                                              | Why                                                                                                             | Where in the code                   |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| One container running `node dist/server/index.js` | serves the API, the built client and the background worker in one process                                       | `server/src/index.ts`, `Dockerfile` |
+| PostgreSQL ≥ 15 (16 recommended)                  | all data; column-list `ON DELETE SET NULL` needs 15+                                                            | `drizzle/*.sql`                     |
+| A **persistent disk** mounted at `/data`          | uploaded documents are stored on local disk (`STORAGE_DIR=/data/storage`); there is no S3 adapter yet           | `server/src/storage/storage.ts`     |
+| **Exactly one instance**                          | local-disk storage is not shared between instances (the worker itself is safe to run on several)                | —                                   |
+| A release step before each new version            | migrations are not applied at boot; the server refuses to start (and `/api/ready` is 503) while any are missing | `dist/server/migrate.js`            |
+| Health checks on `/api/ready`                     | 200 when the database answers, 503 when it does not or while shutting down; `/api/health` is liveness only      | `server/src/app.ts`                 |
+| ≥ 10 s for shutdown                               | the server drains requests and the worker on `SIGTERM`                                                          | `server/src/index.ts`               |
+| HTTPS in front                                    | cookies are `Secure` in production                                                                              | —                                   |
 
 ## Recommended platform: Render
 
@@ -45,7 +49,9 @@ container with a persistent volume and a release command.
 3. **Disk** — add a persistent disk mounted at **`/data`** (1 GB is plenty for
    staging).
 4. **Health check path** — `/api/ready`.
-5. **Pre-deploy command** — `node dist/server/migrate.js`.
+5. **Pre-deploy command** — `node dist/server/migrate.js`. If your instance
+   type offers no pre-deploy command, set `FLOWOS_MIGRATE_ON_START=true` in
+   step 6 instead (only with exactly one instance).
 6. **Environment** — add the variables below in the service's _Environment_
    tab. Secrets are entered there only: never in chat, Git, `.env.example`,
    source files or any `VITE_*`/client variable.
@@ -70,7 +76,7 @@ container with a persistent volume and a release command.
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_TEAM`, `STRIPE_PRICE_BUSINESS` | optional          | **test-mode** values only for staging (`sk_test_…`). Unset = self-hosted mode (no limits). Webhook endpoint: `https://<APP_ORIGIN host>/api/billing/stripe/webhook` (see DEPLOYMENT.md → Billing)                         |
 | `ANTHROPIC_API_KEY`                                                                        | optional          | leave **unset** until you decide to enable paid assistant usage; never reuse the key leaked in `76ad080`                                                                                                                  |
 | `FLOWOS_WORKER`                                                                            | optional          | `true` (default)                                                                                                                                                                                                          |
-| `FLOWOS_MIGRATE_ON_START`                                                                  | no                | leave unset; the pre-deploy command migrates                                                                                                                                                                              |
+| `FLOWOS_MIGRATE_ON_START`                                                                  | no                | leave unset when the pre-deploy command migrates; `true` only when there is no pre-deploy command and exactly one instance                                                                                                |
 
 ### Migrations safely
 
@@ -81,6 +87,28 @@ container with a persistent volume and a release command.
   (Render: database → _Backups_, or `pg_dump`).
 - Upgrading a database created from `main` (9 migrations) to this branch
   (14) was tested locally with data present.
+
+## Fixing a deployment whose migrations did not run
+
+Symptom: the log repeats `[workflows] worker tick failed … database error
+42P01` (42P01 = undefined table), and sign-up or sign-in fail. Cause: the
+container was started on a database that the release step never migrated (no
+pre-deploy command, or it was not saved). Nothing is wrong with the data;
+nothing needs to be dropped or reset. Since the fix for known defect 29 (IMPLEMENTATION_STATUS.md) the server refuses
+to start in that state and names the fix, instead of running half-broken.
+
+1. Take a backup of the database first (Render: database → _Backups_).
+2. Either set the service's **Pre-deploy command** to
+   `node dist/server/migrate.js`, or (single instance, no pre-deploy command)
+   add the environment variable `FLOWOS_MIGRATE_ON_START=true`.
+3. Redeploy. The deploy log shows `Migrations applied.` (pre-deploy) and the
+   service log `FLOWOS API listening …` with no `worker tick failed` lines.
+4. `https://<staging>/api/ready` → `{"ok":true}`; then run the smoke test below.
+
+Migrations only add tables, columns and indexes (and 0009 revokes duplicate
+open invitations), run in one transaction and skip what is already applied,
+so existing users, organizations and documents are kept. This upgrade, with
+data present, is covered by `server/test/migrations.test.ts`.
 
 ## Staging smoke test (after each deploy)
 
