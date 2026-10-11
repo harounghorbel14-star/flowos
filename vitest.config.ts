@@ -9,7 +9,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["server/test/**/*.test.ts", "shared/**/*.test.ts"],
+    include: ["server/test/**/*.test.ts", "shared/**/*.test.ts", "client/src/**/*.test.{ts,tsx}"],
     globalSetup: ["server/test/globalSetup.ts"],
     setupFiles: ["server/test/setupEnv.ts"],
     // Integration tests share one Postgres database; run files serially.

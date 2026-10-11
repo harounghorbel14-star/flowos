@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { LogoMark } from "../components/brand";
 import { useToast } from "../components/toast";
 import {
   Badge,
@@ -287,11 +288,8 @@ function Transcript({ id }: { id: string }) {
             {streaming.text ? (
               <div className="prose">{streaming.text}</div>
             ) : (
-              <span className="typing" aria-hidden>
-                <span />
-                <span />
-                <span />
-              </span>
+              // Only while the reply is genuinely on its way (no text yet).
+              <LogoMark size={18} state="working" className="assistant-working" />
             )}
           </div>
         </>
