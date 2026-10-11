@@ -423,6 +423,62 @@ async function step(name, fn) {
     },
   );
 
+  await step("motion: dialogs restore focus, toasts dismiss, counters land on real values", async () => {
+    await a.goto(`${BASE}/tasks`);
+    await a.getByRole("button", { name: "New task" }).click();
+    await a.getByRole("dialog").getByLabel("Title").waitFor();
+    await a.keyboard.press("Escape");
+    await a.getByRole("dialog").waitFor({ state: "hidden" });
+    const focused = await a.evaluate(() => document.activeElement?.textContent?.trim() ?? "");
+    if (!focused.includes("New task")) throw new Error(`focus not returned to the opener: "${focused}"`);
+
+    // A real edit (Save is disabled until something changes), then the original name back.
+    await a.goto(`${BASE}/settings`);
+    const nameField = a.getByLabel("Organization name");
+    const original = await nameField.inputValue();
+    await nameField.fill(`${original} Ltd`);
+    await a.getByRole("button", { name: "Save" }).click();
+    const toast = a.locator(".toast", { hasText: "Settings saved." });
+    await toast.waitFor();
+    await toast.getByRole("button", { name: "Dismiss notification" }).click();
+    await toast.waitFor({ state: "detached" });
+    await nameField.fill(original);
+    await a.getByRole("button", { name: "Save" }).click();
+    await a.locator(".toast", { hasText: "Settings saved." }).waitFor();
+
+    // KPI counters animate, but always end on the number the server returned.
+    await a.goto(`${BASE}/`);
+    await a.locator(".metric .value").first().waitFor();
+    await a.waitForTimeout(900);
+    const shown = await a.locator(".metric .value").allTextContents();
+    const real = await a.locator(".metric .sr-only").allTextContents();
+    if (shown.join() !== real.join()) throw new Error(`counters ${shown} != values ${real}`);
+  });
+
+  await step("reduced motion: no dialog animation, counters show final values at once", async () => {
+    const ctx = await browser.newContext({
+      viewport: { width: 1400, height: 900 },
+      reducedMotion: "reduce",
+      storageState: await a.context().storageState(),
+    });
+    const p = await ctx.newPage();
+    watch(p, "reduced-motion");
+    await p.goto(`${BASE}/`);
+    await p.locator(".metric .value").first().waitFor();
+    const shown = await p.locator(".metric .value").allTextContents();
+    const real = await p.locator(".metric .sr-only").allTextContents();
+    if (shown.join() !== real.join()) throw new Error(`reduced motion counters ${shown} != ${real}`);
+    await p.goto(`${BASE}/tasks`);
+    await p.getByRole("button", { name: "New task" }).click();
+    const dialog = p.getByRole("dialog");
+    await dialog.waitFor();
+    const duration = await dialog.evaluate((el) => parseFloat(getComputedStyle(el).animationDuration));
+    if (duration > 0.01) throw new Error(`dialog animates under reduced motion: ${duration}s`);
+    await p.keyboard.press("Escape");
+    await dialog.waitFor({ state: "hidden" });
+    await ctx.close();
+  });
+
   await browser.close();
   const unexpected = problems.filter((p) => !/403|Forbidden|permission/i.test(p));
   console.log(`\nConsole problems (${problems.length}, unexpected ${unexpected.length}):`);

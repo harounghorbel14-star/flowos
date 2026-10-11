@@ -12,6 +12,7 @@ import {
   StatusBadge,
 } from "../components/ui";
 import { dueLabel, formatDay, percent, personName, timeAgo } from "../lib/format";
+import { useCountUp } from "../lib/motion";
 import { useOrg } from "../lib/session";
 import { trpc } from "../lib/trpc";
 
@@ -58,8 +59,11 @@ export function CommandCenterPage() {
 
       {cc.error ? <ErrorState error={cc.error} onRetry={() => void cc.refetch()} /> : null}
       {cc.isLoading ? (
-        <div className="panel">
-          <SkeletonRows rows={6} />
+        <div className="stack" aria-busy="true" aria-label="Loading">
+          <MetricsSkeleton />
+          <div className="panel">
+            <SkeletonRows rows={5} />
+          </div>
         </div>
       ) : null}
 
@@ -97,7 +101,7 @@ export function CommandCenterPage() {
               to="/projects"
               label="Projects at risk"
               value={cc.data.metrics.projectsAtRisk}
-              hint={`${cc.data.metrics.completedLast7Days} tasks done in 7 days`}
+              hint={`${cc.data.metrics.completedLast7Days} ${cc.data.metrics.completedLast7Days === 1 ? "task" : "tasks"} done in 7 days`}
               tone={cc.data.metrics.projectsAtRisk > 0 ? "attention" : undefined}
             />
           </div>
@@ -395,12 +399,32 @@ function Metric({
   hint: string;
   tone?: "critical" | "attention";
 }) {
+  const shown = useCountUp(value, `cc:${to}`);
   return (
     <Link to={to} className={["metric", tone].filter(Boolean).join(" ")}>
       <span className="eyebrow">{text}</span>
-      <span className="value">{value}</span>
+      {/* Assistive technology reads the real value, never the in-between frames. */}
+      <span className="value" aria-hidden>
+        {shown}
+      </span>
+      <span className="sr-only">{value}</span>
       <span className="hint">{hint}</span>
     </Link>
+  );
+}
+
+/** Same grid and heights as the loaded metrics, so nothing jumps when data arrives. */
+function MetricsSkeleton() {
+  return (
+    <div className="metrics" aria-hidden>
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} className="metric">
+          <span className="skeleton" style={{ width: "55%", height: 11 }} />
+          <span className="skeleton" style={{ width: 44, height: 32, margin: "2px 0" }} />
+          <span className="skeleton" style={{ width: "70%", height: 11 }} />
+        </div>
+      ))}
+    </div>
   );
 }
 

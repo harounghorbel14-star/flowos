@@ -60,9 +60,25 @@ try {
   await step("pressing Confirm executes exactly once and links the task", async () => {
     await page.getByRole("button", { name: "Confirm" }).first().click();
     await page.getByText("Executed").waitFor();
+    // The result and the toast come from the backend's answer, never before it.
+    await page.getByText("Applied", { exact: true }).waitFor();
+    await page
+      .getByText(/^Done: /)
+      .first()
+      .waitFor();
     await page.getByRole("link", { name: "Open task" }).click();
     await page.getByRole("heading", { name: "Prepare onboarding pack" }).waitFor();
     await page.screenshot({ path: `${SHOTS}/21-assistant-task.png`, fullPage: true });
+  });
+  await step("Stop interrupts a streaming answer; nothing is changed", async () => {
+    await page.goto(`${BASE}/assistant`);
+    await page.getByRole("button", { name: "New conversation" }).first().click();
+    await page.getByLabel("Message").fill("Please take your time");
+    await page.getByLabel("Message").press("Enter");
+    await page.getByText("This answer streams slowly").first().waitFor();
+    await page.getByRole("button", { name: "Stop" }).click();
+    await page.getByText("Stopped. Nothing was changed.").waitFor();
+    await page.getByRole("button", { name: "Send" }).waitFor();
   });
 } catch (e) {
   console.error("\nFAILED:", e.message);

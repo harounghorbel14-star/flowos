@@ -18,6 +18,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useOrg } from "../lib/session";
+import { syncDialog } from "../lib/motion";
 import { trpc } from "../lib/trpc";
 
 interface Item {
@@ -69,12 +70,11 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose(): vo
     const d = ref.current;
     if (!d) return;
     if (open && !d.open) {
-      d.showModal();
       setQ("");
       setIndex(0);
       setTimeout(() => inputRef.current?.focus(), 0);
     }
-    if (!open && d.open) d.close();
+    return syncDialog(d, open);
   }, [open]);
 
   const actions = useMemo<Item[]>(() => {

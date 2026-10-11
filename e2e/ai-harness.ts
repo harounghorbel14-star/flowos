@@ -32,7 +32,7 @@ const reply = (content: unknown[], stop: string) =>
 
 const scripted: AiProvider = {
   model: "scripted-e2e",
-  async run(req: AiTurnRequest, onText) {
+  async run(req: AiTurnRequest, onText, signal) {
     const last = req.messages.at(-1)!;
     const blocks = last.content as unknown as Array<{ type: string; text?: string; content?: string }>;
     const toolResult = blocks.find((b) => b.type === "tool_result");
@@ -55,6 +55,16 @@ const scripted: AiProvider = {
       .join(" ")
       .toLowerCase();
     const id = `toolu_${randomUUID()}`;
+    // A deliberately slow answer, so the browser test can press Stop mid-stream.
+    if (text.includes("take your time")) {
+      const words = "This answer streams slowly so that it can be stopped. ".repeat(8).split(/(?<= )/);
+      for (const word of words) {
+        if (signal?.aborted) throw new Error("aborted");
+        onText(word);
+        await new Promise((r) => setTimeout(r, 120));
+      }
+      return reply([{ type: "text", text: words.join("") }], "end_turn");
+    }
     if (text.includes("create a task"))
       return reply(
         [

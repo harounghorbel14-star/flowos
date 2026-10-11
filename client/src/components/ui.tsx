@@ -12,6 +12,7 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 import { label as labelOf } from "@shared/domain";
+import { syncDialog } from "../lib/motion";
 import { errorMessage } from "../lib/trpc";
 import { initials } from "../lib/format";
 
@@ -272,7 +273,20 @@ const TONES: Record<string, string> = {
 
 export function StatusBadge({ value, dot = true }: { value: string; dot?: boolean }) {
   const tone = TONES[value] ?? "";
-  return <span className={["badge", tone, dot && "dot"].filter(Boolean).join(" ")}>{labelOf(value)}</span>;
+  // Animate only when the value really changes (keyed remount), never on first render or re-render.
+  const previous = useRef(value);
+  const changed = previous.current !== value;
+  useEffect(() => {
+    previous.current = value;
+  }, [value]);
+  return (
+    <span
+      key={value}
+      className={["badge", tone, dot && "dot", changed && "changed"].filter(Boolean).join(" ")}
+    >
+      {labelOf(value)}
+    </span>
+  );
 }
 
 export function Badge({ tone, children }: { tone?: string; children: ReactNode }) {
@@ -417,11 +431,17 @@ export function Modal({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  // While the exit animation plays, show what was on screen when it was open: the parent
+  // may already have cleared the state its content reads from.
+  const [mounted, setMounted] = useState(open);
+  const last = useRef({ title, children, footer });
+  if (open) last.current = { title, children, footer };
+  const view = open ? { title, children, footer } : last.current;
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    if (!open && dialog.open) dialog.close();
+    if (open) setMounted(true);
+    return syncDialog(dialog, open, () => setMounted(false));
   }, [open]);
   return (
     <dialog
@@ -437,18 +457,18 @@ export function Modal({
         if (e.target === ref.current) onClose();
       }}
     >
-      {open ? (
+      {open || mounted ? (
         <>
           <div className="modal-head">
             <h2 className="section-title" id={titleId}>
-              {title}
+              {view.title}
             </h2>
             <Button variant="ghost" icon size="sm" onClick={onClose} aria-label="Close">
               <X aria-hidden />
             </Button>
           </div>
-          <div className="modal-body">{children}</div>
-          {footer ? <div className="modal-foot">{footer}</div> : null}
+          <div className="modal-body">{view.children}</div>
+          {view.footer ? <div className="modal-foot">{view.footer}</div> : null}
         </>
       ) : null}
     </dialog>
