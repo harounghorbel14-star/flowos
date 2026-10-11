@@ -1,6 +1,7 @@
 import { createApp, markDraining } from "./app";
 import { runMigrations } from "./db/migrate";
 import { closeDb, getDb } from "./db/client";
+import { pendingMigrations, schemaBehindMessage } from "./db/schema-status";
 import { assertServerConfig, env } from "./env";
 import { startWorker } from "./modules/workflows/engine";
 
@@ -12,6 +13,14 @@ async function main() {
   assertServerConfig();
   // Migrations are an explicit step (npm run db:migrate). Opt in for single-instance setups.
   if (process.env.FLOWOS_MIGRATE_ON_START === "true") await runMigrations();
+  // Never serve or run the worker against an older schema: every query on a missing table
+  // would fail (42P01). An unreachable database is not fatal here; /api/ready reports it.
+  const pending = await pendingMigrations(getDb()).catch(() => null);
+  if (pending) {
+    console.error(`${schemaBehindMessage(pending)} Refusing to start.`);
+    await closeDb();
+    process.exit(1);
+  }
   const app = createApp();
   // Workflow worker runs in-process; set FLOWOS_WORKER=false to run API-only replicas.
   const stopWorker = process.env.FLOWOS_WORKER !== "false" ? startWorker(getDb()) : async () => {};

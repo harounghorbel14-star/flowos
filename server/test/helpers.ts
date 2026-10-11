@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import pg from "pg";
 import { afterAll } from "vitest";
 import { loginLimiter, signupLimiter } from "../src/auth/rateLimit";
 import { closeDb, getDb } from "../src/db/client";
@@ -78,4 +79,29 @@ export async function addMember(
 export async function resetLimiters() {
   await loginLimiter.reset();
   await signupLimiter.reset();
+}
+
+/**
+ * A fresh, empty database next to the test database (its name contains "test").
+ * Needs CREATEDB; used to reproduce a deployment whose migrations never ran.
+ */
+export async function createScratchDatabase(suffix: string) {
+  const base = new URL(process.env.DATABASE_URL!);
+  const name = `${base.pathname.slice(1)}_${suffix}`;
+  const admin = new pg.Client({ connectionString: base.toString() });
+  await admin.connect();
+  await admin.query(`drop database if exists "${name}"`);
+  await admin.query(`create database "${name}"`);
+  await admin.end();
+  const url = new URL(base);
+  url.pathname = `/${name}`;
+  return {
+    url: url.toString(),
+    drop: async () => {
+      const c = new pg.Client({ connectionString: base.toString() });
+      await c.connect();
+      await c.query(`drop database if exists "${name}" with (force)`);
+      await c.end();
+    },
+  };
 }

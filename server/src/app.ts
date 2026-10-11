@@ -5,6 +5,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import helmet from "helmet";
 import { sql } from "drizzle-orm";
 import { getDb } from "./db/client";
+import { pendingMigrations } from "./db/schema-status";
 import { env, isProduction } from "./env";
 import { aiHttpRouter } from "./modules/ai/http";
 import { billingWebhookRouter } from "./modules/billing/http";
@@ -70,7 +71,9 @@ export function createApp() {
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
-  // Readiness: the database answers within 2 s. Load balancers should route on this.
+  // Readiness: the database answers within 2 s and has this version's migrations (checked
+  // until it does once; a schema never goes back). Load balancers should route on this.
+  let schemaCurrent = false;
   app.get("/api/ready", async (_req, res) => {
     if (draining) {
       res.status(503).json({ ok: false, error: "shutting down" });
@@ -78,12 +81,21 @@ export function createApp() {
     }
     let timer: NodeJS.Timeout | undefined;
     try {
-      await Promise.race([
-        getDb().execute(sql`select 1`),
-        new Promise((_, reject) => {
+      const pending = await Promise.race([
+        schemaCurrent
+          ? getDb()
+              .execute(sql`select 1`)
+              .then(() => 0)
+          : pendingMigrations(getDb()),
+        new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new Error("timeout")), 2000);
         }),
       ]);
+      if (pending > 0) {
+        res.status(503).json({ ok: false, error: "database schema not migrated" });
+        return;
+      }
+      schemaCurrent = true;
       res.json({ ok: true });
     } catch {
       res.status(503).json({ ok: false, error: "database unavailable" });
