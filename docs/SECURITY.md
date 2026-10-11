@@ -8,6 +8,8 @@ readiness — see "Known gaps" at the end.
 
 Password change (current password required, rate limited) and "sign out other devices" are available under Settings → Account; both are audited.
 
+Password reset ("Forgot password?"): the request answers identically for every email and looks the account up only after responding, so neither content nor timing reveals registered emails; 5 requests per 15 minutes per IP and per email. A reset link carries a 256-bit random token stored only as its SHA-256, is built from `APP_ORIGIN` (never from request headers), works once (row-locked), expires after 1 hour, is cancelled by a newer link, and on use revokes every session of the account. Emails are plain text over SMTP (`SMTP_URL` is a secret and never logged). Without SMTP an operator with database access creates links with `reset-link`. Requests, operator links and resets are audited (`password-reset.test.ts`).
+
 | Control                                                                                                                                                                                                                                                      | Where                         | Verified by                               |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- | ----------------------------------------- |
 | scrypt password hashing (N=2^15, r=8, p=1, 16-byte salt), constant-time compare                                                                                                                                                                              | `server/src/auth/password.ts` | `foundation.test.ts`                      |
@@ -170,7 +172,7 @@ dependencies (including `stripe` 22.6.2, pinned) report no known vulnerabilities
 
 ## Known gaps (not yet implemented)
 
-- **No email delivery**: password reset, email verification and invitation emails do not exist. Invitations are shared as links by the inviter.
+- **Email**: only password reset links are emailed (when SMTP is configured; tested against a local SMTP server, not a real provider). Email verification and invitation emails do not exist; invitations are shared as links by the inviter.
 - **Emails are not verified.** Someone can register an address they do not own first; the real owner then cannot sign up, and an invitation link for that address can be accepted by that account. Signup also reveals whether an email is registered. Fixing this needs email delivery (above).
 - **No MFA / SSO.**
 - **No account deletion / data export** (GDPR workflows). Note: user deletion is currently blocked by the append-only audit trigger (actor reference) — a dedicated anonymization path is required.

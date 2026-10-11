@@ -812,6 +812,33 @@ table.data a.row-link:hover {
 .textarea[aria-invalid="true"] {
   border-color: var(--critical);
 }
+.input-with-action {
+  position: relative;
+}
+.input-with-action .input {
+  padding-right: 40px;
+}
+.input-action {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  width: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 0 7px 7px 0;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.input-action:hover {
+  color: var(--ink);
+}
+.input-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
 .field {
   display: flex;
   flex-direction: column;

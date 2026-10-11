@@ -1,11 +1,15 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { getDummyHash, hashPassword, verifyPassword } from "../../auth/password";
-import { loginLimiter, signupLimiter } from "../../auth/rateLimit";
-import { createSession, revokeOtherSessions, revokeSession } from "../../auth/session";
+import { createResetLink } from "../../auth/passwordReset";
+import { loginLimiter, passwordResetLimiter, signupLimiter } from "../../auth/rateLimit";
+import { createSession, revokeAllSessions, revokeOtherSessions, revokeSession } from "../../auth/session";
 import type { Database } from "../../db/client";
-import { memberships, organizations, users } from "../../db/schema";
+import { memberships, organizations, passwordResetTokens, users } from "../../db/schema";
 import { audit } from "../../lib/audit";
 import { AppError, conflict } from "../../lib/errors";
+import { logSafeError } from "../../lib/logging";
+import { getMailer, type Mailer } from "../../lib/mail";
+import { hashToken } from "../../lib/tokens";
 
 interface RequestMeta {
   ip: string | null;
@@ -135,6 +139,106 @@ export async function signOutOtherSessions(
     },
   );
   return { ok: true as const, otherSessionsSignedOut: signedOut };
+}
+
+/**
+ * "Forgot password?". The answer is the same whether or not the email has an
+ * account, and the lookup and email happen after responding (`delivery`), so
+ * neither the response nor its timing reveals which emails are registered.
+ * `emailEnabled` is a server setting, not a property of the account.
+ */
+export async function requestPasswordReset(db: Database, input: { email: string }, meta: RequestMeta) {
+  const email = normalizeEmail(input.email);
+  await passwordResetLimiter.consume(`ip:${meta.ip ?? "unknown"}`, db);
+  await passwordResetLimiter.consume(`email:${email}`, db);
+  const mailer = getMailer();
+  const delivery = mailer
+    ? sendResetEmail(db, mailer, email, meta).catch((err: unknown) => {
+        console.error("[auth] password reset email failed:", logSafeError(err));
+      })
+    : Promise.resolve();
+  return { emailEnabled: mailer !== null, delivery };
+}
+
+async function sendResetEmail(db: Database, mailer: Mailer, email: string, meta: RequestMeta) {
+  const [user] = await db
+    .select({ id: users.id, email: users.email, name: users.name })
+    .from(users)
+    .where(eq(sql`lower(${users.email})`, email))
+    .limit(1);
+  if (!user) return;
+  const link = await db.transaction(async (tx) => {
+    const created = await createResetLink(tx, user.id);
+    await audit(
+      tx,
+      { userId: user.id, orgId: null, ip: meta.ip },
+      {
+        action: "user.password_reset_requested",
+        entityType: "user",
+        entityId: user.id,
+        summary: "Requested a password reset link",
+      },
+    );
+    return created;
+  });
+  await mailer.send({
+    to: user.email,
+    subject: "Reset your FLOWOS password",
+    text: [
+      `Hello ${user.name},`,
+      "",
+      "Someone (hopefully you) asked to reset the password of your FLOWOS account.",
+      "Open this link to choose a new password. It works once and expires in 1 hour:",
+      "",
+      link.url,
+      "",
+      "If you did not ask for this, ignore this email: your password stays the same.",
+    ].join("\n"),
+  });
+}
+
+/** Set a new password from a reset link. The link works once; every session is signed out. */
+export async function resetPassword(
+  db: Database,
+  input: { token: string; password: string },
+  meta: RequestMeta,
+) {
+  await loginLimiter.consume(`ip:${meta.ip ?? "unknown"}`, db);
+  const passwordHash = await hashPassword(input.password);
+  const tokenHash = hashToken(input.token);
+  await db.transaction(async (tx) => {
+    const [link] = await tx
+      .select({ id: passwordResetTokens.id, userId: passwordResetTokens.userId })
+      .from(passwordResetTokens)
+      .where(
+        and(
+          eq(passwordResetTokens.tokenHash, tokenHash),
+          isNull(passwordResetTokens.usedAt),
+          gt(passwordResetTokens.expiresAt, new Date()),
+        ),
+      )
+      .for("update");
+    if (!link) {
+      throw new AppError("BAD_REQUEST", "This reset link is invalid or has expired. Request a new one.");
+    }
+    await tx
+      .update(passwordResetTokens)
+      .set({ usedAt: new Date() })
+      .where(eq(passwordResetTokens.id, link.id));
+    await tx.update(users).set({ passwordHash }).where(eq(users.id, link.userId));
+    const signedOut = await revokeAllSessions(tx, link.userId);
+    await audit(
+      tx,
+      { userId: link.userId, orgId: null, ip: meta.ip },
+      {
+        action: "user.password_reset",
+        entityType: "user",
+        entityId: link.userId,
+        summary: `Reset password with an email link; signed out ${signedOut} session(s)`,
+      },
+    );
+  });
+  return { ok: true as const };
 }
 
 export async function listMyOrganizations(db: Database, userId: string) {

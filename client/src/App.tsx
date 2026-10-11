@@ -6,7 +6,7 @@ import { SessionProvider, useMe } from "./lib/session";
 import { ApprovalDetailPage } from "./pages/ApprovalDetail";
 import { AssistantPage } from "./pages/Assistant";
 import { ApprovalsPage } from "./pages/Approvals";
-import { AcceptInvitePage, LoginPage, SignupPage } from "./pages/Auth";
+import { AcceptInvitePage, ForgotPasswordPage, LoginPage, ResetPasswordPage, SignupPage } from "./pages/Auth";
 import { CommandCenterPage } from "./pages/CommandCenter";
 import { DepartmentsPage } from "./pages/Departments";
 import { DocumentsPage } from "./pages/Documents";
@@ -57,6 +57,8 @@ export function App() {
       <Route path="/login" element={me.data ? <Navigate to={afterAuth} replace /> : <LoginPage />} />
       <Route path="/signup" element={me.data ? <Navigate to={afterAuth} replace /> : <SignupPage />} />
       <Route path="/invite/:token" element={<AcceptInvitePage signedIn={Boolean(me.data)} />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
       <Route
         path="*"
         element={

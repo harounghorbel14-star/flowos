@@ -43,7 +43,7 @@ async function step(name, fn) {
     await a.getByRole("link", { name: "Create an account" }).click();
     await a.getByLabel("Full name").fill(OWNER.name);
     await a.getByLabel("Work email").fill(OWNER.email);
-    await a.getByLabel("Password").fill(OWNER.password);
+    await a.getByLabel("Password", { exact: true }).fill(OWNER.password);
     await a.getByRole("button", { name: "Create account" }).click();
     await a.waitForURL(/\/onboarding/);
   });
@@ -179,7 +179,7 @@ async function step(name, fn) {
     await b.getByRole("link", { name: "Create account" }).click();
     await b.getByLabel("Full name").fill(MIA.name);
     await b.getByLabel("Work email").fill(MIA.email);
-    await b.getByLabel("Password").fill(MIA.password);
+    await b.getByLabel("Password", { exact: true }).fill(MIA.password);
     await b.getByRole("button", { name: "Create account" }).click();
     await b.waitForURL(/\/invite\//);
     await b.getByRole("button", { name: "Accept invitation" }).click();
@@ -254,7 +254,7 @@ async function step(name, fn) {
 
   await step("Olivia logs in, sees the request, and approves", async () => {
     await a.getByLabel("Work email").fill(OWNER.email);
-    await a.getByLabel("Password").fill(OWNER.password);
+    await a.getByLabel("Password", { exact: true }).fill(OWNER.password);
     await a.getByRole("button", { name: "Sign in" }).click();
     await a.waitForURL(`${BASE}/`);
     await a.getByText("1 request waiting for your decision.").waitFor();
@@ -376,11 +376,52 @@ async function step(name, fn) {
     watch(f, "mia-relogin");
     await f.goto(`${BASE}/login`);
     await f.getByLabel("Work email").fill(MIA.email);
-    await f.getByLabel("Password").fill(newPassword);
+    await f.getByLabel("Password", { exact: true }).fill(newPassword);
     await f.getByRole("button", { name: "Sign in" }).click();
     await f.waitForURL(`${BASE}/`);
     await fresh.close();
   });
+
+  await step(
+    "password can be shown while typing; forgot password answers without revealing accounts",
+    async () => {
+      const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+      const p = await ctx.newPage();
+      // Not watch(): the expired-link check below answers 400 by design, which Chromium logs.
+      (global.__pages ??= []).push(p);
+      p.on("pageerror", (e) => problems.push(`[forgot pageerror] ${e.message}`));
+      await p.goto(`${BASE}/login`);
+      const field = p.getByLabel("Password", { exact: true });
+      await field.fill("visible-check-1");
+      if ((await field.getAttribute("type")) !== "password")
+        throw new Error("password not hidden by default");
+      await p.getByRole("button", { name: "Show password" }).click();
+      if ((await field.getAttribute("type")) !== "text") throw new Error("Show password did not reveal it");
+      await p.getByRole("button", { name: "Hide password" }).click();
+      if ((await field.getAttribute("type")) !== "password") throw new Error("Hide password did not hide it");
+
+      await p.getByLabel("Work email").fill("nobody-here@example.test");
+      await p.getByRole("link", { name: "Forgot password?" }).click();
+      await p.getByRole("heading", { name: "Reset your password" }).waitFor();
+      // The email typed on the sign-in page is carried over.
+      if ((await p.getByLabel("Work email").inputValue()) !== "nobody-here@example.test")
+        throw new Error("email not carried over");
+      await p.getByRole("button", { name: "Send reset link" }).click();
+      // Same answer for any email; which one depends on whether this server has SMTP configured.
+      await p
+        .getByText(/If an account exists for|cannot send email yet/)
+        .first()
+        .waitFor();
+      await p.screenshot({ path: `${SHOTS}/16-forgot-password.png`, fullPage: true });
+
+      await p.goto(`${BASE}/reset-password/not-a-real-token-but-long-enough-0000000000`);
+      await p.getByLabel("New password", { exact: true }).fill("brand-new-pass-7");
+      await p.getByLabel("Repeat new password").fill("brand-new-pass-7");
+      await p.getByRole("button", { name: "Set new password" }).click();
+      await p.getByText("This reset link is invalid or has expired.").waitFor();
+      await ctx.close();
+    },
+  );
 
   await browser.close();
   const unexpected = problems.filter((p) => !/403|Forbidden|permission/i.test(p));

@@ -8,6 +8,14 @@ const schema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   /** Trust X-Forwarded-For from this many proxy hops (0 = direct). */
   TRUST_PROXY: z.coerce.number().int().min(0).default(0),
+  /** Outgoing email (password reset links), e.g. smtps://user:pass@smtp.example.com:465. Secret. */
+  SMTP_URL: z
+    .string()
+    .url()
+    .refine((u) => /^smtps?:\/\//.test(u), "SMTP_URL must start with smtp:// or smtps://")
+    .optional(),
+  /** Sender address for outgoing email, e.g. "FLOWOS <no-reply@example.com>". */
+  MAIL_FROM: z.string().min(3).max(200).optional(),
 });
 
 export type Env = z.infer<typeof schema>;

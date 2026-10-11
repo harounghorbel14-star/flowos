@@ -7,6 +7,7 @@ import type { Actor } from "../../lib/actor";
 import { audit } from "../../lib/audit";
 import { AppError } from "../../lib/errors";
 import { purgeExpiredRateLimits } from "../../auth/rateLimit";
+import { purgeOldResetTokens } from "../../auth/passwordReset";
 import { purgeExpiredSessions } from "../../auth/session";
 import { notifyExpiringDocuments } from "../documents/service";
 import { recordDailySnapshots } from "../insights/service";
@@ -278,7 +279,8 @@ export async function runHousekeeping(db: Database) {
   const rateLimitsPurged = await purgeExpiredRateLimits(db);
   const sessionsPurged = await purgeExpiredSessions(db);
   const webhookEventsPurged = await purgeOldWebhookEvents(db);
-  return { expiryReminders, rateLimitsPurged, sessionsPurged, webhookEventsPurged };
+  const resetLinksPurged = await purgeOldResetTokens(db);
+  return { expiryReminders, rateLimitsPurged, sessionsPurged, webhookEventsPurged, resetLinksPurged };
 }
 
 /**

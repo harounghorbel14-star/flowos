@@ -22,7 +22,7 @@ does it matter, and what should happen next?_
 - **Assistant** — ask about live data; it uses only tools your role allows and every change waits for your explicit confirmation (requires `ANTHROPIC_API_KEY`; not yet verified against the live API).
 - **Security** — tenant isolation enforced in services _and_ the database, role-based permissions, append-only audit log.
 
-Also built: billing plans with Stripe (verified with a fake Stripe in tests, not against Stripe itself) and Slack/Teams incoming webhooks (delivery to a real channel not verified yet). Not built: email delivery, OAuth integrations. See the status doc.
+Also built: billing plans with Stripe (verified with a fake Stripe in tests, not against Stripe itself) and Slack/Teams incoming webhooks (delivery to a real channel not verified yet). "Forgot password?" sends a reset link when SMTP is configured (tested with a local SMTP server only). Not built: notification emails, OAuth integrations. See the status doc.
 
 ## Quick start
 

@@ -99,6 +99,13 @@
       "when": 1791581333717,
       "tag": "0013_billing_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791740590809,
+      "tag": "0014_password_resets",
+      "breakpoints": true
     }
   ]
 }
