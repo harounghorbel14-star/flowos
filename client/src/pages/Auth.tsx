@@ -1,25 +1,124 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { label } from "@shared/domain";
+import { LogoMark, Wordmark } from "../components/brand";
 import { Button, EmptyState, ErrorState, PasswordField, TextField } from "../components/ui";
 import { useToast } from "../components/toast";
+import {
+  INTRO_MS,
+  INTRO_SCALE,
+  markIntroPlayed,
+  readIntroMode,
+  readMotionPaused,
+  writeMotionPaused,
+} from "../lib/brand";
+import { prefersReducedMotion } from "../lib/motion";
 import { errorMessage, fieldErrors, formError, trpc } from "../lib/trpc";
 
-function AuthLayout({ children }: { children: ReactNode }) {
+const LOOP = ["SEE", "UNDERSTAND", "DECIDE", "EXECUTE", "LEARN"];
+
+/**
+ * The branded entry. The intro plays in the art panel only (full on a first visit, short for a
+ * returning visitor, never twice in a session, never under reduced motion); the form beside it
+ * works from the first frame. Skip with the button or Escape; afterwards the same control
+ * pauses the ambient motion. `busy` reflects a real request in flight.
+ */
+function AuthLayout({ children, busy = false }: { children: ReactNode; busy?: boolean }) {
+  const [reduced] = useState(prefersReducedMotion);
+  const [mode] = useState(() => readIntroMode(reduced));
+  const [phase, setPhase] = useState<"intro" | "idle">(mode === "none" ? "idle" : "intro");
+  const [paused, setPaused] = useState(readMotionPaused);
+  const artRef = useRef<HTMLElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+
+  // The mark performs at the centre of the panel, then settles where it rests: measure that
+  // offset (layout positions, unaffected by transforms) before the first frame paints.
+  useLayoutEffect(() => {
+    const art = artRef.current;
+    const stage = stageRef.current;
+    if (mode === "none" || !art || !stage) return;
+    const dx = art.clientWidth / 2 - (stage.offsetLeft + stage.offsetWidth / 2);
+    const dy = art.clientHeight / 2 - (stage.offsetTop + stage.offsetHeight / 2);
+    art.style.setProperty("--stage-x", `${Math.round(dx)}px`);
+    art.style.setProperty("--stage-y", `${Math.round(dy)}px`);
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode === "none") return;
+    markIntroPlayed();
+    const timer = window.setTimeout(() => setPhase("idle"), INTRO_MS[mode]);
+    return () => window.clearTimeout(timer);
+  }, [mode]);
+
+  useEffect(() => {
+    if (phase !== "intro") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPhase("idle");
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [phase]);
+
+  const toggleMotion = () => {
+    const next = !paused;
+    setPaused(next);
+    writeMotionPaused(next);
+  };
+
   return (
     <div className="auth">
-      <aside className="auth-art">
-        <div className="row">
-          <span className="brand-mark" aria-hidden>
-            F
-          </span>
-          <span className="brand-name">FLOWOS</span>
+      <aside
+        ref={artRef}
+        className="auth-art"
+        data-intro={mode}
+        data-phase={phase}
+        data-ambient={paused ? "paused" : "on"}
+        style={{ "--t": INTRO_SCALE[mode] || 1 } as CSSProperties}
+      >
+        {reduced ? null : phase === "intro" ? (
+          <button type="button" className="intro-control" onClick={() => setPhase("idle")}>
+            Skip intro
+          </button>
+        ) : (
+          <button type="button" className="intro-control" onClick={toggleMotion}>
+            {paused ? "Play animation" : "Pause animation"}
+          </button>
+        )}
+        <div className="auth-stage" ref={stageRef}>
+          <div className="auth-emblem">
+            <span className="brand-aura" aria-hidden />
+            <LogoMark
+              size={104}
+              tone="on-dark"
+              reveal={phase === "intro"}
+              glint={!reduced}
+              state={busy ? "working" : "idle"}
+            />
+          </div>
+          <Wordmark className="auth-wordmark" height={22} />
         </div>
         <h1>
           The operating system for how your company <em>actually</em> runs.
         </h1>
         <p className="loop">
-          SEE → UNDERSTAND → DECIDE → <b>EXECUTE</b> → LEARN
+          {LOOP.map((word, i) => (
+            <Fragment key={word}>
+              {i > 0 ? " " : null}
+              <span style={{ "--i": i } as CSSProperties}>
+                {word === "EXECUTE" ? <b>{word}</b> : word}
+                {i < LOOP.length - 1 ? "\u00a0→" : null}
+              </span>
+            </Fragment>
+          ))}
         </p>
       </aside>
       <section className="auth-panel">{children}</section>
@@ -39,7 +138,7 @@ export function LoginPage() {
     login.mutate({ email, password });
   };
   return (
-    <AuthLayout>
+    <AuthLayout busy={login.isPending}>
       <div className="stack" style={{ gap: 8 }}>
         <p className="eyebrow">Welcome back</p>
         <h2 className="display" style={{ fontSize: 32 }}>
@@ -97,7 +196,7 @@ export function SignupPage() {
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
   return (
-    <AuthLayout>
+    <AuthLayout busy={signup.isPending}>
       <div className="stack" style={{ gap: 8 }}>
         <p className="eyebrow">Get started</p>
         <h2 className="display" style={{ fontSize: 32 }}>
@@ -162,7 +261,7 @@ export function ForgotPasswordPage() {
   const errors = fieldErrors(request.error);
   const topError = formError(request.error, ["email"]);
   return (
-    <AuthLayout>
+    <AuthLayout busy={request.isPending}>
       <div className="stack" style={{ gap: 8 }}>
         <p className="eyebrow">Forgot password</p>
         <h2 className="display" style={{ fontSize: 32 }}>
@@ -238,7 +337,7 @@ export function ResetPasswordPage() {
   const errors = fieldErrors(reset.error);
   const topError = formError(reset.error, ["password"]);
   return (
-    <AuthLayout>
+    <AuthLayout busy={reset.isPending}>
       <div className="stack" style={{ gap: 8 }}>
         <p className="eyebrow">Reset password</p>
         <h2 className="display" style={{ fontSize: 32 }}>
@@ -310,7 +409,7 @@ export function AcceptInvitePage({ signedIn }: { signedIn: boolean }) {
   });
   const next = encodeURIComponent(`/invite/${token}`);
   return (
-    <AuthLayout>
+    <AuthLayout busy={accept.isPending}>
       {preview.isLoading ? <span className="eyebrow">Checking invitation…</span> : null}
       {preview.error ? (
         <EmptyState title="Invitation not found">

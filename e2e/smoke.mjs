@@ -479,6 +479,114 @@ async function step(name, fn) {
     await ctx.close();
   });
 
+  await step(
+    "brand: intro plays once, never blocks sign-in, skips, pauses, short for returning visitors",
+    async () => {
+      const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+      const p = await ctx.newPage();
+      watch(p, "brand");
+      await p.goto(`${BASE}/login`);
+      const art = p.locator(".auth-art");
+      await art.and(p.locator('[data-intro="full"][data-phase="intro"]')).waitFor();
+      await p.getByRole("img", { name: "FLOWOS" }).first().waitFor();
+      // The form is usable while the intro plays.
+      await p.getByLabel("Work email").fill("someone@example.test");
+      await p.screenshot({ path: `${SHOTS}/28-brand-intro.png` });
+      // Escape skips; the same control then pauses the ambient motion.
+      await p.keyboard.press("Escape");
+      await art.and(p.locator('[data-phase="idle"]')).waitFor();
+      if ((await p.getByLabel("Work email").inputValue()) !== "someone@example.test")
+        throw new Error("skipping the intro touched the form");
+      await p.getByRole("button", { name: "Pause animation" }).click();
+      await art.and(p.locator('[data-ambient="paused"]')).waitFor();
+      // Route changes and reloads in the same session do not replay it; the pause is remembered.
+      await p.getByRole("link", { name: "Create an account" }).click();
+      await art.and(p.locator('[data-intro="none"][data-phase="idle"]')).waitFor();
+      await p.reload();
+      await art.and(p.locator('[data-intro="none"][data-ambient="paused"]')).waitFor();
+      await p.getByRole("button", { name: "Play animation" }).click();
+      // A new session for a returning visitor: the short reveal, which ends by itself.
+      const q = await ctx.newPage();
+      watch(q, "brand-returning");
+      await q.goto(`${BASE}/login`);
+      const art2 = q.locator(".auth-art");
+      await art2.and(q.locator('[data-intro="short"]')).waitFor();
+      await art2.and(q.locator('[data-phase="idle"]')).waitFor({ timeout: 3000 });
+      // The skip button keeps focus when it turns into the pause control.
+      await ctx.clearCookies();
+      await q.evaluate(() => {
+        localStorage.clear();
+        sessionStorage.clear();
+      });
+      await q.reload();
+      await q.getByRole("button", { name: "Skip intro" }).click();
+      await art2.and(q.locator('[data-phase="idle"]')).waitFor();
+      const focused = await q.evaluate(() => document.activeElement?.textContent ?? "");
+      if (focused !== "Pause animation") throw new Error(`focus lost after skipping: "${focused}"`);
+      await ctx.close();
+    },
+  );
+
+  await step(
+    "brand: startup loader only while loading; icons served; sidebar mark reveals once",
+    async () => {
+      const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+      const p = await ctx.newPage();
+      watch(p, "startup");
+      let release;
+      const held = new Promise((r) => (release = r));
+      await p.route("**/api/trpc/auth.me**", async (route) => {
+        await held;
+        await route.continue();
+      });
+      await p.goto(`${BASE}/`);
+      const loader = p.getByRole("status").filter({ hasText: "Loading FLOWOS…" });
+      await loader.waitFor();
+      if ((await loader.locator('.logo-mark[data-state="working"]').count()) !== 1)
+        throw new Error("loader mark is not in its working state");
+      release();
+      await p.waitForURL(/\/login/);
+      await loader.waitFor({ state: "detached" });
+      for (const [file, type] of [
+        ["/favicon.svg", "image/svg+xml"],
+        ["/apple-touch-icon.png", "image/png"],
+        ["/icon-192.png", "image/png"],
+        ["/icon-512.png", "image/png"],
+        ["/site.webmanifest", "manifest+json"],
+      ]) {
+        const res = await p.request.get(`${BASE}${file}`);
+        if (res.status() !== 200 || !(res.headers()["content-type"] ?? "").includes(type))
+          throw new Error(`${file}: ${res.status()} ${res.headers()["content-type"]}`);
+      }
+      await ctx.close();
+
+      // The owner's session revealed its sidebar mark long ago: navigation never replays it.
+      await a.goto(`${BASE}/tasks`);
+      const mark = a.getByRole("link", { name: "FLOWOS home" }).locator(".logo-mark");
+      await mark.waitFor();
+      if (await mark.evaluate((el) => el.classList.contains("lm-reveal")))
+        throw new Error("sidebar mark replayed its reveal");
+    },
+  );
+
+  await step("reduced motion: no intro, no motion control, brand still rendered", async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, reducedMotion: "reduce" });
+    const p = await ctx.newPage();
+    watch(p, "brand-reduced");
+    await p.goto(`${BASE}/login`);
+    const art = p.locator(".auth-art");
+    await art.and(p.locator('[data-intro="none"][data-phase="idle"]')).waitFor();
+    if (await p.locator(".intro-control").count())
+      throw new Error("motion control shown under reduced motion");
+    if (await p.locator(".lm-glint").count()) throw new Error("edge light rendered under reduced motion");
+    await p.getByRole("img", { name: "FLOWOS" }).first().waitFor();
+    const anim = await p
+      .locator(".brand-aura")
+      .evaluate((el) => parseFloat(getComputedStyle(el).animationDuration) || 0);
+    if (anim > 0.01) throw new Error(`aura animates under reduced motion: ${anim}s`);
+    await ctx.close();
+  });
+
   await browser.close();
   const unexpected = problems.filter((p) => !/403|Forbidden|permission/i.test(p));
   console.log(`\nConsole problems (${problems.length}, unexpected ${unexpected.length}):`);

@@ -79,6 +79,8 @@ try {
     await page.getByRole("button", { name: "Stop" }).click();
     await page.getByText("Stopped. Nothing was changed.").waitFor();
     await page.getByRole("button", { name: "Send" }).waitFor();
+    // The working mark is shown only while a reply is genuinely on its way.
+    if (await page.locator(".assistant-working").count()) throw new Error("activity mark left after Stop");
   });
 } catch (e) {
   console.error("\nFAILED:", e.message);

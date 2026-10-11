@@ -34,6 +34,15 @@
   --series-1: #0b9b91;
   --series-2: #eb6834;
 
+  /* Brand: a deep navy-graphite stage, steel-blue streams, the teal-cyan core. */
+  --brand-stage: #0c1319;
+  --brand-stage-2: #15212b;
+  --brand-flow: #2f4a63;
+  --brand-core: #0b9b91;
+  --brand-flow-on-dark: #9bb8d6;
+  --brand-core-on-dark: #2ccfbc;
+  --brand-glint: #e4fffb;
+
   --rail: #1b1c1a;
   --rail-ink: #d6d1c4;
   --rail-ink-2: #8f8b80;
@@ -86,6 +95,8 @@
     --info-wash: #1b2535;
     --series-1: #19a394;
     --series-2: #d95926;
+    --brand-flow: #9bb8d6;
+    --brand-core: #2ccfbc;
     --rail: #0f100e;
     --rail-hover: #1d1e1b;
     --rail-line: #24251f;
@@ -118,6 +129,8 @@
   --good-wash: #1a2e1c;
   --info: #94b1dc;
   --info-wash: #1b2535;
+  --brand-flow: #9bb8d6;
+  --brand-core: #2ccfbc;
   --rail: #0f100e;
   --rail-hover: #1d1e1b;
   --rail-line: #24251f;
@@ -246,28 +259,9 @@ h3 {
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
   padding: 6px 8px 14px;
-  text-decoration: none;
-}
-.brand-mark {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  background: var(--teal);
-  display: grid;
-  place-items: center;
-  color: #08201d;
-  font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: 13px;
-}
-.brand-name {
-  font-family: var(--font-mono);
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  font-size: 13px;
   color: #f3efe6;
+  text-decoration: none;
 }
 .rail-section {
   font-family: var(--font-mono);
@@ -1478,8 +1472,8 @@ dialog.palette::backdrop {
   grid-template-columns: minmax(0, 1.1fr) minmax(360px, 520px);
 }
 .auth-art {
-  background: var(--rail);
-  color: #ece8df;
+  background: radial-gradient(90% 70% at 18% 8%, var(--brand-stage-2), transparent 70%), var(--brand-stage);
+  color: #e6ecf0;
   padding: 48px;
   display: flex;
   flex-direction: column;
@@ -1487,15 +1481,17 @@ dialog.palette::backdrop {
   gap: 32px;
   position: relative;
   overflow: hidden;
+  isolation: isolate;
 }
 .auth-art .loop {
   font-family: var(--font-mono);
   letter-spacing: 0.16em;
   font-size: 12px;
-  color: #8f8b80;
+  color: #8a9aa8;
+  margin: 0;
 }
 .auth-art .loop b {
-  color: var(--teal);
+  color: var(--brand-core-on-dark);
   font-weight: 500;
 }
 .auth-art h1 {
@@ -1510,7 +1506,7 @@ dialog.palette::backdrop {
 }
 .auth-art h1 em {
   font-style: italic;
-  color: var(--teal);
+  color: var(--brand-core-on-dark);
 }
 .auth-panel {
   display: flex;
@@ -1689,37 +1685,6 @@ dialog.palette::backdrop {
 }
 .tool-step svg {
   flex: none;
-}
-/* Three dots while the first words are on their way; static under reduced motion. */
-.typing {
-  display: inline-flex;
-  gap: 4px;
-  padding: 4px 0;
-}
-.typing span {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ink-3);
-  animation: typing 1.2s var(--ease-in-out) infinite;
-}
-.typing span:nth-child(2) {
-  animation-delay: 0.15s;
-}
-.typing span:nth-child(3) {
-  animation-delay: 0.3s;
-}
-@keyframes typing {
-  0%,
-  60%,
-  100% {
-    opacity: 0.35;
-    transform: none;
-  }
-  30% {
-    opacity: 1;
-    transform: translateY(-2px);
-  }
 }
 .action-card {
   box-shadow: none;
@@ -1965,4 +1930,340 @@ ul.plain {
   display: grid;
   gap: 4px;
   color: var(--ink-2);
+}
+
+/* ─── Brand ──────────────────────────────────────────────────────────────── */
+/* The mark (components/brand.tsx). Pieces and core move about the grid centre; CSS px in
+   an SVG transform are grid units, so every distance below scales with the mark. */
+.logo-mark {
+  --lm-flow: var(--brand-flow);
+  --lm-core: var(--brand-core);
+  flex: none;
+  overflow: visible;
+}
+.logo-mark[data-tone="on-dark"] {
+  --lm-flow: var(--brand-flow-on-dark);
+  --lm-core: var(--brand-core-on-dark);
+}
+.logo-mark[data-tone="mono"] {
+  --lm-flow: currentColor;
+  --lm-core: currentColor;
+}
+.lm-piece,
+.lm-core {
+  transform-box: view-box;
+  transform-origin: 24px 24px;
+  transition: transform var(--dur-base) var(--ease);
+}
+.lm-piece {
+  stroke: var(--lm-flow);
+}
+.lm-core {
+  fill: var(--lm-core);
+}
+.lm-glint {
+  stroke: var(--brand-glint);
+  stroke-width: 1.6;
+  stroke-dasharray: 0.16 1.2;
+  stroke-dashoffset: 0.16;
+  opacity: 0;
+}
+@media (forced-colors: active) {
+  .logo-mark {
+    --lm-flow: CanvasText;
+    --lm-core: CanvasText;
+  }
+  .lm-glint {
+    display: none;
+  }
+}
+
+/* Convergence: the pieces arrive from their corners and lock; then the core lights.
+   --t scales the timing (1 = the full intro). Fill "backwards" so hover still works after. */
+.lm-reveal .lm-piece {
+  animation: lm-converge calc(var(--t, 1) * 1300ms) var(--ease) calc(var(--t, 1) * (300ms + var(--i) * 180ms))
+    backwards;
+}
+.lm-reveal .lm-core {
+  animation: lm-ignite calc(var(--t, 1) * 600ms) var(--ease) calc(var(--t, 1) * 1700ms) backwards;
+}
+@keyframes lm-converge {
+  from {
+    opacity: 0;
+    transform: rotate(-14deg) translate(calc(var(--dx) * 10px), calc(var(--dy) * 10px));
+  }
+  55% {
+    opacity: 1;
+  }
+}
+@keyframes lm-ignite {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+@keyframes lm-glint {
+  0% {
+    opacity: 0;
+    stroke-dashoffset: 0.16;
+  }
+  15%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    stroke-dashoffset: -1.04;
+  }
+}
+
+/* Working: one piece at a time leans into the core, clockwise. Only for real work in progress. */
+.logo-mark[data-state="working"] .lm-piece {
+  animation: lm-work 1600ms var(--ease-in-out) calc(var(--i) * 400ms) infinite;
+}
+.logo-mark[data-state="working"] .lm-core {
+  animation: lm-core-work 1600ms var(--ease-in-out) infinite;
+}
+@keyframes lm-work {
+  0%,
+  50%,
+  100% {
+    transform: none;
+  }
+  25% {
+    transform: translate(calc(var(--dx) * -2.5px), calc(var(--dy) * -2.5px));
+  }
+}
+@keyframes lm-core-work {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* Interaction: hovering or focusing the home link draws the pieces in. */
+.brand:hover .lm-piece,
+.brand:focus-visible .lm-piece {
+  transform: translate(calc(var(--dx) * -1.5px), calc(var(--dy) * -1.5px));
+}
+.brand:hover .lm-core,
+.brand:focus-visible .lm-core {
+  transform: scale(1.12);
+}
+
+.lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.wordmark {
+  flex: none;
+  display: block;
+}
+.wordmark .wm-core {
+  fill: var(--brand-core);
+}
+.rail .wordmark .wm-core,
+.auth-art .wordmark .wm-core {
+  fill: var(--brand-core-on-dark);
+}
+.topbar-brand {
+  color: var(--ink);
+}
+
+/* Startup loader: appears only if loading outlasts a blink. */
+.brand-loader {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 14px;
+  height: 100%;
+  animation: fade-in var(--dur-slow) var(--ease) 240ms backwards;
+}
+
+/* ─── Brand stage (sign-in pages) ─────────────────────────────────────────── */
+.auth-stage {
+  --stage-scale: 1.7;
+  align-self: flex-start; /* as wide as its content, so the intro can centre it */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+.auth-emblem {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.auth-emblem .logo-mark {
+  width: clamp(64px, 8vw, 104px);
+  height: auto;
+  position: relative;
+}
+.brand-aura {
+  position: absolute;
+  inset: -60%;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--brand-core-on-dark) 22%, transparent),
+    transparent
+  );
+  opacity: 0.7;
+  pointer-events: none;
+}
+.brand-aura::after {
+  content: "";
+  position: absolute;
+  inset: 34%;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--brand-core-on-dark) 45%, transparent);
+  opacity: 0;
+}
+.auth-wordmark {
+  color: #f3f6f8;
+}
+.auth-art .loop span {
+  display: inline-block;
+}
+.intro-control {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 1;
+  border: 1px solid #2a3a47;
+  background: color-mix(in srgb, var(--brand-stage) 70%, transparent);
+  color: #c4d0d9;
+  font: 500 12px/1 var(--font-ui);
+  padding: 7px 11px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.intro-control:hover {
+  background: #1b2a35;
+  color: #fff;
+}
+.intro-control:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-core-on-dark) 55%, transparent);
+}
+
+/* The intro: ~5 s at --t: 1, ~1.4 s for returning visitors. Every step only adds; the
+   sign-in form beside it is usable from the first frame. */
+.auth-art[data-phase="intro"] .auth-stage {
+  animation: stage-settle calc(var(--t) * 4100ms) var(--ease-in-out) backwards;
+}
+.auth-art[data-phase="intro"] .brand-aura {
+  animation: aura-in calc(var(--t) * 1400ms) var(--ease) backwards;
+}
+.auth-art[data-phase="intro"] .brand-aura::after {
+  animation: aura-ring calc(var(--t) * 1300ms) var(--ease) calc(var(--t) * 2000ms) backwards;
+}
+.auth-art[data-phase="intro"] .lm-glint {
+  animation: lm-glint calc(var(--t) * 900ms) var(--ease-in-out) calc(var(--t) * (2200ms + var(--i) * 120ms))
+    backwards;
+}
+.auth-art[data-phase="intro"] .auth-wordmark {
+  animation: wm-reveal calc(var(--t) * 800ms) var(--ease) calc(var(--t) * 2300ms) backwards;
+}
+.auth-art[data-phase="intro"] .wm-core {
+  animation: fade-in calc(var(--t) * 500ms) var(--ease) calc(var(--t) * 2900ms) backwards;
+}
+.auth-art[data-phase="intro"] h1 {
+  animation: rise-in calc(var(--t) * 800ms) var(--ease) calc(var(--t) * 3700ms) backwards;
+}
+.auth-art[data-phase="intro"] .loop span {
+  animation: rise-in calc(var(--t) * 500ms) var(--ease) calc(var(--t) * (4100ms + var(--i) * 140ms)) backwards;
+}
+@keyframes stage-settle {
+  0%,
+  78% {
+    transform: translate(var(--stage-x, 0), var(--stage-y, 0)) scale(var(--stage-scale));
+  }
+}
+@keyframes aura-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+@keyframes aura-ring {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.8);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+@keyframes wm-reveal {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/* Ambient, after the intro: a slow breath and an edge light every nine seconds.
+   The control in the corner pauses it; reduced motion never starts it. */
+.auth-art[data-phase="idle"][data-ambient="on"] .brand-aura {
+  animation: aura-breathe 7s var(--ease-in-out) infinite;
+}
+.auth-art[data-phase="idle"][data-ambient="on"] .lm-glint {
+  animation: lm-glint-idle 9s var(--ease-in-out) calc(var(--i) * 140ms) infinite;
+}
+@keyframes aura-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.04);
+  }
+}
+@keyframes lm-glint-idle {
+  0% {
+    opacity: 0;
+    stroke-dashoffset: 0.16;
+  }
+  2%,
+  12% {
+    opacity: 1;
+  }
+  14%,
+  100% {
+    opacity: 0;
+    stroke-dashoffset: -1.04;
+  }
+}
+
+@media (max-width: 1080px) {
+  .auth-stage {
+    --stage-scale: 1.25;
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+  }
+  .auth-emblem .logo-mark {
+    width: 48px;
+  }
+  .auth-art h1 {
+    font-size: clamp(28px, 7vw, 40px);
+  }
+  .intro-control {
+    top: 12px;
+    right: 12px;
+  }
+}
+.assistant-working {
+  display: block;
+  margin: 3px 0;
 }

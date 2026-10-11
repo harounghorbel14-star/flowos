@@ -239,6 +239,8 @@ limits are exact under concurrency and shared by all API instances. Keys are
 - The design system lives in `client/src/styles.css` (tokens on `:root`, dark
   theme, reduced motion) and `components/ui.tsx` (Button, fields, Modal on the
   native `<dialog>`, ConfirmDialog, badges, empty/error/loading states).
+- Brand (mark, wordmark, sign-in intro, loader, icons) is inline SVG and CSS in
+  `components/brand.tsx` and `lib/brand.ts`; see [BRAND.md](BRAND.md).
 
 ## Key decisions
 

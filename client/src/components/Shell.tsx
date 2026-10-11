@@ -18,12 +18,15 @@ import {
   Workflow,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { label } from "@shared/domain";
+import { markShellRevealed, shouldRevealShell } from "../lib/brand";
+import { prefersReducedMotion } from "../lib/motion";
 import { useOrg } from "../lib/session";
 import { trpc } from "../lib/trpc";
+import { LogoMark, Wordmark } from "./brand";
 import { CommandPalette } from "./CommandPalette";
 import { useToast } from "./toast";
 
@@ -42,6 +45,9 @@ export function Shell() {
   const [navOpen, setNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>(readTheme);
+  // The sidebar mark converges once per session, not on every navigation or organization switch.
+  const [revealMark] = useState(() => shouldRevealShell(prefersReducedMotion()));
+  useEffect(markShellRevealed, []);
   const location = useLocation();
   const navigate = useNavigate();
   const toast = useToast();
@@ -124,10 +130,10 @@ export function Shell() {
     <div className={navOpen ? "shell nav-open" : "shell"}>
       <nav className="rail" id="app-rail" ref={railRef} aria-label="Main navigation">
         <NavLink to="/" className="brand" aria-label="FLOWOS home">
-          <span className="brand-mark" aria-hidden>
-            F
+          <span className="lockup">
+            <LogoMark size={26} tone="on-dark" reveal={revealMark} style={{ "--t": 0.45 } as CSSProperties} />
+            <Wordmark height={12} title={null} />
           </span>
-          <span className="brand-name">FLOWOS</span>
         </NavLink>
 
         <label className="sr-only" htmlFor="org-switch">
@@ -243,8 +249,9 @@ export function Shell() {
           >
             <Menu size={18} aria-hidden />
           </button>
-          <span className="brand-name" style={{ color: "var(--ink)" }}>
-            FLOWOS
+          <span className="lockup topbar-brand">
+            <LogoMark size={22} />
+            <Wordmark height={11} />
           </span>
           <span style={{ marginLeft: "auto" }} />
           <button className="btn icon ghost" onClick={() => setPaletteOpen(true)} aria-label="Search">

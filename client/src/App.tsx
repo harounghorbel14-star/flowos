@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { BrandLoader } from "./components/brand";
 import { Shell } from "./components/Shell";
 import { ErrorState } from "./components/ui";
 import { safeNext } from "./lib/nav";
@@ -31,11 +32,7 @@ import { TasksPage } from "./pages/Tasks";
 import { WorkflowDetailPage, WorkflowsPage } from "./pages/Workflows";
 
 function FullPageLoading() {
-  return (
-    <div style={{ display: "grid", placeItems: "center", height: "100%" }} aria-busy="true">
-      <span className="eyebrow">Loading FLOWOS…</span>
-    </div>
-  );
+  return <BrandLoader label="Loading FLOWOS…" />;
 }
 
 export function App() {
