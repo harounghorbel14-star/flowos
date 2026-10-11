@@ -101,7 +101,7 @@ export function CommandCenterPage() {
               to="/projects"
               label="Projects at risk"
               value={cc.data.metrics.projectsAtRisk}
-              hint={`${cc.data.metrics.completedLast7Days} tasks done in 7 days`}
+              hint={`${cc.data.metrics.completedLast7Days} ${cc.data.metrics.completedLast7Days === 1 ? "task" : "tasks"} done in 7 days`}
               tone={cc.data.metrics.projectsAtRisk > 0 ? "attention" : undefined}
             />
           </div>
