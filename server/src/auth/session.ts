@@ -20,6 +20,8 @@ export interface AuthState {
   sessionId: string;
   expiresAt: Date;
   user: SessionUser;
+  /** True when this request moved the expiry forward, so the cookie must follow. */
+  renewed?: boolean;
 }
 
 export async function createSession(
@@ -68,13 +70,15 @@ export async function validateSession(
   }
 
   let expiresAt = row.expiresAt;
+  let renewed = false;
   if (expiresAt.getTime() - now < RENEW_WHEN_REMAINING_MS && expiresAt.getTime() < hardLimit) {
     expiresAt = new Date(Math.min(now + SESSION_TTL_MS, hardLimit));
+    renewed = true;
     await db.update(sessions).set({ expiresAt, lastSeenAt: new Date() }).where(eq(sessions.id, sessionId));
   } else if (now - row.lastSeenAt.getTime() > TOUCH_INTERVAL_MS) {
     await db.update(sessions).set({ lastSeenAt: new Date() }).where(eq(sessions.id, sessionId));
   }
-  return { sessionId, expiresAt, user: row.user };
+  return { sessionId, expiresAt, user: row.user, renewed };
 }
 
 export async function revokeSession(db: Database, sessionId: string): Promise<void> {

@@ -4,7 +4,10 @@ import { randomUUID } from "node:crypto";
 import superjson from "superjson";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
-import { resetLimiters } from "./helpers";
+import { sessions } from "../src/db/schema";
+import { hashToken } from "../src/lib/tokens";
+import { eq } from "drizzle-orm";
+import { db, resetLimiters } from "./helpers";
 
 /** End-to-end checks through the real Express stack: cookies, CSRF guard, headers. */
 let server: Server;
@@ -54,6 +57,36 @@ describe("HTTP layer", () => {
     const after = await query("auth.me", undefined, { cookie: session });
     const afterBody = (await after.json()) as { result: { data: { json: unknown } } };
     expect(afterBody.result.data.json).toBeNull();
+  });
+
+  it("re-sends the session cookie only when the session is renewed", async () => {
+    // Regression: every authenticated response carried Set-Cookie, so a request still in
+    // flight when the user signed out (or the cookie was removed) put the cookie back.
+    const res = await mutate("auth.signup", {
+      email: `r-${randomUUID()}@example.test`,
+      name: "Renew User",
+      password: "longpassword1",
+    });
+    const session = res.headers.get("set-cookie")!.split(";")[0]!;
+    const plain = await query("auth.me", undefined, { cookie: session });
+    expect(plain.status).toBe(200);
+    expect(plain.headers.get("set-cookie")).toBeNull();
+
+    // Inside the renewal window (less than 15 of 30 days left) the expiry moves and the cookie follows.
+    const id = hashToken(session.split("=")[1]!);
+    await db()
+      .update(sessions)
+      .set({ expiresAt: new Date(Date.now() + 10 * 86_400_000) })
+      .where(eq(sessions.id, id));
+    const renewed = await query("auth.me", undefined, { cookie: session });
+    const cookie = renewed.headers.get("set-cookie")!;
+    expect(cookie).toMatch(/^flowos_session=/);
+    const expires = new Date(/Expires=([^;]+)/i.exec(cookie)![1]!).getTime();
+    expect(expires - Date.now()).toBeGreaterThan(29 * 86_400_000);
+
+    // Once renewed, ordinary requests stop re-sending it again.
+    const after = await query("auth.me", undefined, { cookie: session });
+    expect(after.headers.get("set-cookie")).toBeNull();
   });
 
   it("rejects mutations without the client header (CSRF)", async () => {
