@@ -16,6 +16,7 @@ import {
   PageHeader,
   Pagination,
   Panel,
+  PasswordField,
   SelectField,
   SkeletonRows,
   TextField,
@@ -577,18 +578,16 @@ export function AccountPage() {
             }}
           >
             {topError ? <div className="form-error">{topError}</div> : null}
-            <TextField
+            <PasswordField
               label="Current password"
-              type="password"
               autoComplete="current-password"
               value={current}
               onChange={(e) => setCurrent(e.target.value)}
               required
               maxLength={200}
             />
-            <TextField
+            <PasswordField
               label="New password"
-              type="password"
               autoComplete="new-password"
               value={next}
               onChange={(e) => setNext(e.target.value)}
@@ -598,9 +597,8 @@ export function AccountPage() {
               error={errors.newPassword}
               help="At least 10 characters, including a letter and a number. Other devices will be signed out."
             />
-            <TextField
+            <PasswordField
               label="Repeat new password"
-              type="password"
               autoComplete="new-password"
               value={repeat}
               onChange={(e) => setRepeat(e.target.value)}

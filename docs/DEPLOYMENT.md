@@ -52,21 +52,22 @@ The harness is test-only code in `e2e/`; it is not part of the build.
 
 ## Configuration
 
-| Variable                                     | Required       | Default                 | Purpose                                                                                                                                                                                            |
-| -------------------------------------------- | -------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                               | yes            | —                       | PostgreSQL connection string                                                                                                                                                                       |
-| `APP_ORIGIN`                                 | yes in prod    | `http://localhost:5173` | Public origin; mutations from other origins are rejected. The server refuses to start in production without it                                                                                     |
-| `NODE_ENV`                                   |                | `development`           | `production` enables secure cookies, masked errors, static client serving                                                                                                                          |
-| `PORT`                                       |                | `3000`                  | HTTP port                                                                                                                                                                                          |
-| `TRUST_PROXY`                                | behind a proxy | `0`                     | Number of reverse-proxy hops to trust for client IPs. Leaving it 0 behind a load balancer makes every client share one rate-limit bucket (logged as a warning at startup)                          |
-| `STORAGE_DIR`                                |                | `./storage`             | Private document storage directory (must not be web-served; back it up)                                                                                                                            |
-| `FLOWOS_MIGRATE_ON_START`                    |                | `false`                 | Apply migrations at boot — only for single-instance setups                                                                                                                                         |
-| `FLOWOS_WORKER`                              |                | `true`                  | Run the workflow/expiry worker in this process                                                                                                                                                     |
-| `ANTHROPIC_API_KEY`                          |                | —                       | Enables the AI assistant (server-side only). Unset: assistant shows "not configured"                                                                                                               |
-| `INTEGRATIONS_ENCRYPTION_KEY`                |                | —                       | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts integration secrets at rest. Unset: integrations cannot be connected. Losing it makes stored connections unreadable (reconnect them) |
-| `STRIPE_SECRET_KEY`                          | for billing    | —                       | Enables billing together with the next three. All unset: self-hosted mode, no plan limits                                                                                                          |
-| `STRIPE_WEBHOOK_SECRET`                      | for billing    | —                       | Signing secret of the webhook endpoint (`whsec_…`)                                                                                                                                                 |
-| `STRIPE_PRICE_TEAM`, `STRIPE_PRICE_BUSINESS` | for billing    | —                       | Stripe Price ids for the paid plans (at least one)                                                                                                                                                 |
+| Variable                                     | Required       | Default                 | Purpose                                                                                                                                                                                                                                     |
+| -------------------------------------------- | -------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                               | yes            | —                       | PostgreSQL connection string                                                                                                                                                                                                                |
+| `APP_ORIGIN`                                 | yes in prod    | `http://localhost:5173` | Public origin; mutations from other origins are rejected. The server refuses to start in production without it                                                                                                                              |
+| `NODE_ENV`                                   |                | `development`           | `production` enables secure cookies, masked errors, static client serving                                                                                                                                                                   |
+| `PORT`                                       |                | `3000`                  | HTTP port                                                                                                                                                                                                                                   |
+| `TRUST_PROXY`                                | behind a proxy | `0`                     | Number of reverse-proxy hops to trust for client IPs. Leaving it 0 behind a load balancer makes every client share one rate-limit bucket (logged as a warning at startup)                                                                   |
+| `STORAGE_DIR`                                |                | `./storage`             | Private document storage directory (must not be web-served; back it up)                                                                                                                                                                     |
+| `FLOWOS_MIGRATE_ON_START`                    |                | `false`                 | Apply pending migrations at boot, before the API and worker start, under a PostgreSQL advisory lock (concurrent starts apply each migration once). For hosts without a release step, e.g. Render Free                                       |
+| `FLOWOS_WORKER`                              |                | `true`                  | Run the workflow/expiry worker in this process                                                                                                                                                                                              |
+| `ANTHROPIC_API_KEY`                          |                | —                       | Enables the AI assistant (server-side only). Unset: assistant shows "not configured"                                                                                                                                                        |
+| `INTEGRATIONS_ENCRYPTION_KEY`                |                | —                       | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts integration secrets at rest. Unset: integrations cannot be connected. Losing it makes stored connections unreadable (reconnect them)                                          |
+| `SMTP_URL`, `MAIL_FROM`                      |                | —                       | Outgoing email for password reset links (`smtp://` or `smtps://` URL with credentials — secret; sender address). Unset: "Forgot password?" says email is unavailable and an operator creates links with `reset-link` (see "Password reset") |
+| `STRIPE_SECRET_KEY`                          | for billing    | —                       | Enables billing together with the next three. All unset: self-hosted mode, no plan limits                                                                                                                                                   |
+| `STRIPE_WEBHOOK_SECRET`                      | for billing    | —                       | Signing secret of the webhook endpoint (`whsec_…`)                                                                                                                                                                                          |
+| `STRIPE_PRICE_TEAM`, `STRIPE_PRICE_BUSINESS` | for billing    | —                       | Stripe Price ids for the paid plans (at least one)                                                                                                                                                                                          |
 
 ## Production build
 
@@ -143,6 +144,25 @@ organization in tool results or answers.
 Use test mode (`sk_test_…`) and Stripe test cards for verification; FLOWOS never charges outside Stripe Checkout.
 
 Feature flags (operator only): `npm run flags -- set <orgId> assistant on "beta"`, `list`, `clear`.
+
+## Password reset
+
+"Forgot password?" on the sign-in page asks for an email and always gives the
+same answer, so it does not reveal which emails have accounts. With `SMTP_URL`
+and `MAIL_FROM` set, an existing account receives a link (built from
+`APP_ORIGIN`) that works once and expires after 1 hour; requesting a new link
+cancels the previous one, and using it signs the account out everywhere.
+Requests are limited to 5 per 15 minutes per IP and per email. Any SMTP
+provider works (your mail host, or a transactional service's SMTP relay);
+delivery has been tested against a local SMTP server only, not a real provider.
+
+Without SMTP the page says the server cannot send email. The operator can then
+create a link for a person and hand it over privately:
+
+```bash
+npm run reset-link -- person@example.com          # development
+node dist/server/reset-link.js person@example.com # production image / Render shell
+```
 
 ## Integrations (Slack, Microsoft Teams)
 

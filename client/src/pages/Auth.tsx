@@ -1,7 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { label } from "@shared/domain";
-import { Button, EmptyState, ErrorState, TextField } from "../components/ui";
+import { Button, EmptyState, ErrorState, PasswordField, TextField } from "../components/ui";
 import { useToast } from "../components/toast";
 import { errorMessage, fieldErrors, formError, trpc } from "../lib/trpc";
 
@@ -60,14 +60,18 @@ export function LoginPage() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
-        <TextField
+        <PasswordField
           label="Password"
-          type="password"
           autoComplete="current-password"
           required
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
+        <div className="row" style={{ justifyContent: "flex-end", marginTop: -6 }}>
+          <Link to="/forgot-password" state={{ email }} style={{ fontSize: 13 }}>
+            Forgot password?
+          </Link>
+        </div>
         <Button variant="primary" type="submit" loading={login.isPending}>
           Sign in
         </Button>
@@ -129,9 +133,8 @@ export function SignupPage() {
           onChange={set("email")}
           error={errors.email}
         />
-        <TextField
+        <PasswordField
           label="Password"
-          type="password"
           autoComplete="new-password"
           required
           value={form.password}
@@ -146,6 +149,142 @@ export function SignupPage() {
       <p className="muted">
         Already have an account?{" "}
         <Link to={`/login${next ? `?next=${encodeURIComponent(next)}` : ""}`}>Sign in</Link>
+      </p>
+    </AuthLayout>
+  );
+}
+
+export function ForgotPasswordPage() {
+  const location = useLocation();
+  const initial = (location.state as { email?: unknown } | null)?.email;
+  const [email, setEmail] = useState(typeof initial === "string" ? initial : "");
+  const request = trpc.auth.requestPasswordReset.useMutation();
+  const errors = fieldErrors(request.error);
+  const topError = formError(request.error, ["email"]);
+  return (
+    <AuthLayout>
+      <div className="stack" style={{ gap: 8 }}>
+        <p className="eyebrow">Forgot password</p>
+        <h2 className="display" style={{ fontSize: 32 }}>
+          Reset your password
+        </h2>
+      </div>
+      {request.data?.emailEnabled ? (
+        <div className="stack" role="status">
+          <p>
+            If an account exists for <strong>{request.variables?.email}</strong>, we sent it a link to choose
+            a new password. The link works once and expires in 1 hour.
+          </p>
+          <p className="muted">No email? Check your spam folder, or try again in a few minutes.</p>
+        </div>
+      ) : request.data ? (
+        <div className="stack" role="status">
+          <p>
+            This FLOWOS server cannot send email yet, so it cannot email you a reset link. Ask the person who
+            runs FLOWOS for your organization to create a reset link for you.
+          </p>
+        </div>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            request.mutate({ email });
+          }}
+          noValidate
+        >
+          {topError ? (
+            <div className="form-error" role="alert">
+              {topError}
+            </div>
+          ) : null}
+          <TextField
+            label="Work email"
+            type="email"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            error={errors.email}
+            help="We will send a link to choose a new password."
+          />
+          <Button variant="primary" type="submit" loading={request.isPending}>
+            Send reset link
+          </Button>
+        </form>
+      )}
+      <p className="muted">
+        Remembered it? <Link to="/login">Back to sign in</Link>
+      </p>
+    </AuthLayout>
+  );
+}
+
+export function ResetPasswordPage() {
+  const { token = "" } = useParams();
+  const navigate = useNavigate();
+  const toast = useToast();
+  const utils = trpc.useUtils();
+  const [password, setPassword] = useState("");
+  const [repeat, setRepeat] = useState("");
+  const [mismatch, setMismatch] = useState(false);
+  const reset = trpc.auth.resetPassword.useMutation({
+    onSuccess: async () => {
+      // Every session was signed out, including this browser's if it had one.
+      await utils.auth.me.invalidate();
+      toast.success("Password changed. Sign in with your new password.");
+      navigate("/login", { replace: true });
+    },
+  });
+  const errors = fieldErrors(reset.error);
+  const topError = formError(reset.error, ["password"]);
+  return (
+    <AuthLayout>
+      <div className="stack" style={{ gap: 8 }}>
+        <p className="eyebrow">Reset password</p>
+        <h2 className="display" style={{ fontSize: 32 }}>
+          Choose a new password
+        </h2>
+      </div>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (password !== repeat) {
+            setMismatch(true);
+            return;
+          }
+          setMismatch(false);
+          reset.mutate({ token, password });
+        }}
+        noValidate
+      >
+        {topError ? (
+          <div className="form-error" role="alert">
+            {topError}
+          </div>
+        ) : null}
+        <PasswordField
+          label="New password"
+          autoComplete="new-password"
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          error={errors.password}
+          help="At least 10 characters, including a letter and a number."
+        />
+        <PasswordField
+          label="Repeat new password"
+          autoComplete="new-password"
+          required
+          value={repeat}
+          onChange={(e) => setRepeat(e.target.value)}
+          error={mismatch ? "The passwords do not match." : undefined}
+        />
+        <Button variant="primary" type="submit" loading={reset.isPending}>
+          Set new password
+        </Button>
+      </form>
+      <p className="muted">
+        Link expired? <Link to="/forgot-password">Request a new one</Link>
       </p>
     </AuthLayout>
   );

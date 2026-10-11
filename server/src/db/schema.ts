@@ -85,6 +85,27 @@ export const sessions = pgTable(
   (t) => [index("sessions_user_idx").on(t.userId), index("sessions_expires_idx").on(t.expiresAt)],
 );
 
+/** Single-use password reset links ("Forgot password?"); valid for one hour. */
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: id(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** SHA-256 of the token. The raw token only exists in the link sent to the user. */
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("password_reset_tokens_token_key").on(t.tokenHash),
+    index("password_reset_tokens_user_idx").on(t.userId),
+    index("password_reset_tokens_expires_idx").on(t.expiresAt),
+  ],
+);
+
 // ─── Tenancy ─────────────────────────────────────────────────────────────────
 
 export const organizations = pgTable(

@@ -24,7 +24,7 @@ try {
     await page.goto(`${BASE}/signup`);
     await page.getByLabel("Full name").fill("Ava Assistant");
     await page.getByLabel("Work email").fill(`ava-${Date.now()}@e2e.test`);
-    await page.getByLabel("Password").fill("assistant-pass-1");
+    await page.getByLabel("Password", { exact: true }).fill("assistant-pass-1");
     await page.getByRole("button", { name: "Create account" }).click();
     await page.waitForURL(/onboarding/);
     await page.getByLabel("Organization name").fill("Assist Co");

@@ -50,8 +50,8 @@ container with a persistent volume and a release command.
    staging).
 4. **Health check path** — `/api/ready`.
 5. **Pre-deploy command** — `node dist/server/migrate.js`. If your instance
-   type offers no pre-deploy command, set `FLOWOS_MIGRATE_ON_START=true` in
-   step 6 instead (only with exactly one instance).
+   type offers no pre-deploy command (Render Free), set
+   `FLOWOS_MIGRATE_ON_START=true` in step 6 instead.
 6. **Environment** — add the variables below in the service's _Environment_
    tab. Secrets are entered there only: never in chat, Git, `.env.example`,
    source files or any `VITE_*`/client variable.
@@ -66,17 +66,18 @@ container with a persistent volume and a release command.
 
 ### Environment variables
 
-| Variable                                                                                   | Required          | Value for staging                                                                                                                                                                                                         |
-| ------------------------------------------------------------------------------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                                                                             | **yes**           | the Render Internal Database URL (secret)                                                                                                                                                                                 |
-| `APP_ORIGIN`                                                                               | **yes**           | the public URL, e.g. `https://flowos-staging.onrender.com` (the server refuses to start without it)                                                                                                                       |
-| `TRUST_PROXY`                                                                              | **yes on Render** | `1` (one proxy in front); check that sign-in audit entries show real client IPs, adjust if not                                                                                                                            |
-| `NODE_ENV`, `PORT`, `STORAGE_DIR`                                                          | set by the image  | `production`, `3000`, `/data/storage` — leave as is unless the platform injects `PORT`                                                                                                                                    |
-| `INTEGRATIONS_ENCRYPTION_KEY`                                                              | optional          | `openssl rand -base64 32`, generated on your machine and pasted only into the platform (secret). Without it Slack/Teams cannot be connected. Keep a copy in a password manager: losing it means reconnecting integrations |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_TEAM`, `STRIPE_PRICE_BUSINESS` | optional          | **test-mode** values only for staging (`sk_test_…`). Unset = self-hosted mode (no limits). Webhook endpoint: `https://<APP_ORIGIN host>/api/billing/stripe/webhook` (see DEPLOYMENT.md → Billing)                         |
-| `ANTHROPIC_API_KEY`                                                                        | optional          | leave **unset** until you decide to enable paid assistant usage; never reuse the key leaked in `76ad080`                                                                                                                  |
-| `FLOWOS_WORKER`                                                                            | optional          | `true` (default)                                                                                                                                                                                                          |
-| `FLOWOS_MIGRATE_ON_START`                                                                  | no                | leave unset when the pre-deploy command migrates; `true` only when there is no pre-deploy command and exactly one instance                                                                                                |
+| Variable                                                                                   | Required             | Value for staging                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                                                                             | **yes**              | the Render Internal Database URL (secret)                                                                                                                                                                                                                                       |
+| `APP_ORIGIN`                                                                               | **yes**              | the public URL, e.g. `https://flowos-staging.onrender.com` (the server refuses to start without it)                                                                                                                                                                             |
+| `TRUST_PROXY`                                                                              | **yes on Render**    | `1` (one proxy in front); check that sign-in audit entries show real client IPs, adjust if not                                                                                                                                                                                  |
+| `NODE_ENV`, `PORT`, `STORAGE_DIR`                                                          | set by the image     | `production`, `3000`, `/data/storage` — leave as is unless the platform injects `PORT`                                                                                                                                                                                          |
+| `INTEGRATIONS_ENCRYPTION_KEY`                                                              | optional             | `openssl rand -base64 32`, generated on your machine and pasted only into the platform (secret). Without it Slack/Teams cannot be connected. Keep a copy in a password manager: losing it means reconnecting integrations                                                       |
+| `SMTP_URL`, `MAIL_FROM`                                                                    | optional             | outgoing email for "Forgot password?" links: an `smtps://user:password@host:465` URL from your mail provider (secret) and a sender such as `FLOWOS <no-reply@your-domain>`. Unset: reset links are created with `node dist/server/reset-link.js <email>` from the service shell |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_TEAM`, `STRIPE_PRICE_BUSINESS` | optional             | **test-mode** values only for staging (`sk_test_…`). Unset = self-hosted mode (no limits). Webhook endpoint: `https://<APP_ORIGIN host>/api/billing/stripe/webhook` (see DEPLOYMENT.md → Billing)                                                                               |
+| `ANTHROPIC_API_KEY`                                                                        | optional             | leave **unset** until you decide to enable paid assistant usage; never reuse the key leaked in `76ad080`                                                                                                                                                                        |
+| `FLOWOS_WORKER`                                                                            | optional             | `true` (default)                                                                                                                                                                                                                                                                |
+| `FLOWOS_MIGRATE_ON_START`                                                                  | Render Free: **yes** | `true` when the plan has no pre-deploy command (Render Free): pending migrations are applied at startup, under a lock. Leave unset when the pre-deploy command migrates                                                                                                         |
 
 ### Migrations safely
 
@@ -97,13 +98,37 @@ pre-deploy command, or it was not saved). Nothing is wrong with the data;
 nothing needs to be dropped or reset. Since the fix for known defect 29 (IMPLEMENTATION_STATUS.md) the server refuses
 to start in that state and names the fix, instead of running half-broken.
 
-1. Take a backup of the database first (Render: database → _Backups_).
+1. Take a backup of the database first (Render: database → _Backups_; on a
+   free database, `pg_dump` with its External Database URL from your machine).
 2. Either set the service's **Pre-deploy command** to
-   `node dist/server/migrate.js`, or (single instance, no pre-deploy command)
-   add the environment variable `FLOWOS_MIGRATE_ON_START=true`.
-3. Redeploy. The deploy log shows `Migrations applied.` (pre-deploy) and the
-   service log `FLOWOS API listening …` with no `worker tick failed` lines.
+   `node dist/server/migrate.js`, or — on **Render Free**, which has no
+   pre-deploy command — add the environment variable
+   `FLOWOS_MIGRATE_ON_START=true` (service → _Environment_ → _Add Environment
+   Variable_ → _Save, rebuild, and deploy_).
+3. The service log then shows `Applied N migration(s) at startup.` (or
+   `Migrations applied.` from the pre-deploy step) followed by
+   `FLOWOS API listening …`, and no `worker tick failed` lines. Later restarts
+   log `Database schema is up to date.`
 4. `https://<staging>/api/ready` → `{"ok":true}`; then run the smoke test below.
+
+The first log line says what the server received:
+`Database: <host>/<name>. Startup migrations: on.` (or `off.`). If it says
+`off` although you set the variable, or the refusal says
+`FLOWOS_MIGRATE_ON_START is not set in this process`, the running service did
+not receive it: check the exact name, that it is on this web service (not the
+database or an unlinked environment group), and deploy again (_Save, rebuild,
+and deploy_, not _Save only_). `True`, `1`, `yes`, extra spaces or quotes all
+count as on; an unrecognized value stops the server with a message naming it.
+
+With `FLOWOS_MIGRATE_ON_START=true` the server applies pending migrations
+before the API and the worker start, using `DATABASE_URL`, under a PostgreSQL
+advisory lock: instances starting at the same time (an overlapping deploy)
+apply each migration once, the others wait and find nothing pending. If a
+migration fails, all of that start's migrations roll back, the database is
+unchanged and the server exits; Render keeps the previous deploy running.
+Verified with the production image on an empty database, on a database at
+`main`'s 14 migrations with data (data kept), on restart, and with two
+containers starting together (`server/test/boot.test.ts` covers the same).
 
 Migrations only add tables, columns and indexes (and 0009 revokes duplicate
 open invitations), run in one transaction and skip what is already applied,

@@ -53,3 +53,5 @@ export async function purgeExpiredRateLimits(db: Database): Promise<number> {
 
 export const loginLimiter = new RateLimiter("login", 10, 60_000);
 export const signupLimiter = new RateLimiter("signup", 5, 60_000);
+/** "Forgot password?" requests, per IP and per email: 5 per 15 minutes. */
+export const passwordResetLimiter = new RateLimiter("password_reset", 5, 15 * 60_000);

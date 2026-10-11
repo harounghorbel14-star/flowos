@@ -2,7 +2,8 @@ import { createApp, markDraining } from "./app";
 import { runMigrations } from "./db/migrate";
 import { closeDb, getDb } from "./db/client";
 import { pendingMigrations, schemaBehindMessage } from "./db/schema-status";
-import { assertServerConfig, env } from "./env";
+import { assertServerConfig, describeDatabase, env, readSwitch } from "./env";
+import { logSafeError } from "./lib/logging";
 import { startWorker } from "./modules/workflows/engine";
 
 /** How long a shutdown may wait for in-flight requests and the worker tick. */
@@ -11,13 +12,27 @@ const SHUTDOWN_GRACE_MS = 10_000;
 async function main() {
   const config = env();
   assertServerConfig();
-  // Migrations are an explicit step (npm run db:migrate). Opt in for single-instance setups.
-  if (process.env.FLOWOS_MIGRATE_ON_START === "true") await runMigrations();
+  const database = describeDatabase();
+  // Migrations are an explicit release step (npm run db:migrate). Hosts without one (e.g. Render
+  // Free) opt in here; runMigrations locks, so overlapping starts apply each migration once.
+  const migrateOnStart = readSwitch("FLOWOS_MIGRATE_ON_START");
+  console.log(`Database: ${database}. Startup migrations: ${migrateOnStart.enabled ? "on" : "off"}.`);
+  if (migrateOnStart.enabled) {
+    const applied = await runMigrations();
+    console.log(applied ? `Applied ${applied} migration(s) at startup.` : "Database schema is up to date.");
+  }
   // Never serve or run the worker against an older schema: every query on a missing table
   // would fail (42P01). An unreachable database is not fatal here; /api/ready reports it.
-  const pending = await pendingMigrations(getDb()).catch(() => null);
+  const pending = await pendingMigrations(getDb()).catch((err: unknown) => {
+    console.warn("Could not verify the database schema at startup:", logSafeError(err));
+    return null;
+  });
   if (pending) {
-    console.error(`${schemaBehindMessage(pending)} Refusing to start.`);
+    console.error(
+      migrateOnStart.enabled
+        ? `Migrations ran at startup but ${pending} are still pending in ${database}: its drizzle.__drizzle_migrations table does not match this version's drizzle/ folder. Refusing to start.`
+        : `${schemaBehindMessage(pending, { database, migrateOnStart })} Refusing to start.`,
+    );
     await closeDb();
     process.exit(1);
   }
@@ -71,6 +86,7 @@ async function main() {
 }
 
 main().catch((err: unknown) => {
-  console.error("Failed to start:", err instanceof Error ? err.message : err);
+  // logSafeError: a raw query error would print the statement's parameters.
+  console.error("Failed to start:", err instanceof Error && !err.cause ? err.message : logSafeError(err));
   process.exit(1);
 });

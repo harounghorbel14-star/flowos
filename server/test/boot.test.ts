@@ -5,11 +5,21 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import path from "node:path";
 import { and, eq, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { build } from "esbuild";
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ONBOARDING_TEMPLATE } from "@shared/workflows";
 import { tasks } from "../src/db/schema";
-import { addMember, createOrg, createScratchDatabase, db } from "./helpers";
+import {
+  addMember,
+  createOrg,
+  createScratchDatabase,
+  db,
+  migrationJournal,
+  olderMigrations,
+} from "./helpers";
 
 /**
  * Boots the server the way production does: one esbuild bundle (same flags as
@@ -269,6 +279,177 @@ describe("production boot", () => {
       await scratch.drop();
     }
   }, 45_000);
+
+  it("FLOWOS_MIGRATE_ON_START upgrades an older schema in place, keeping its data", async () => {
+    // Render Free has no pre-deploy step: the server itself must migrate, once, before serving.
+    const scratch = await createScratchDatabase("boot_upgrade");
+    const older = olderMigrations(9); // main before billing and integrations
+    const pool = new pg.Pool({ connectionString: scratch.url });
+    try {
+      await migrate(drizzle(pool), { migrationsFolder: older });
+      await pool.query(
+        `insert into users (email, name, password_hash) values ('kept@example.test', 'Kept', 'x')`,
+      );
+      await pool.query(`insert into organizations (name, slug) values ('Kept Org', 'kept-org')`);
+
+      const port = await freePort();
+      const { proc, log } = startServer({
+        ...childEnv(port),
+        DATABASE_URL: scratch.url,
+        FLOWOS_MIGRATE_ON_START: "true",
+      });
+      try {
+        await waitFor(
+          async () => ((await fetch(`http://localhost:${port}/api/ready`)).ok ? true : undefined),
+          20_000,
+          "readiness after upgrading on start",
+        );
+        await new Promise((r) => setTimeout(r, 2500));
+        expect(log.text).toContain(`Applied ${migrationJournal.entries.length - 9} migration(s) at startup.`);
+        expect(log.text).not.toContain("worker tick failed");
+        expect(log.text).not.toContain(scratch.url);
+      } finally {
+        const exited = once(proc, "exit");
+        proc.kill("SIGTERM");
+        expect(((await exited) as [number | null])[0]).toBe(0);
+      }
+      const kept = await pool.query(
+        `select (select count(*) from users where email = 'kept@example.test')::int as users,
+                (select count(*) from organizations where slug = 'kept-org')::int as orgs,
+                (select count(*) from drizzle.__drizzle_migrations)::int as migrations`,
+      );
+      expect(kept.rows[0]).toEqual({ users: 1, orgs: 1, migrations: migrationJournal.entries.length });
+    } finally {
+      await pool.end();
+      await scratch.drop();
+      rmSync(older, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("two instances starting together with FLOWOS_MIGRATE_ON_START apply each migration exactly once", async () => {
+    // An overlapping deploy or restart: without a lock both read "nothing applied" and
+    // the second one fails on objects the first already created.
+    const scratch = await createScratchDatabase("boot_concurrent");
+    const servers: Array<ReturnType<typeof startServer>> = [];
+    try {
+      const ports = [await freePort(), await freePort()];
+      for (const port of ports) {
+        servers.push(
+          startServer({
+            ...childEnv(port),
+            DATABASE_URL: scratch.url,
+            FLOWOS_MIGRATE_ON_START: "true",
+            FLOWOS_WORKER: "false",
+          }),
+        );
+      }
+      for (const [i, port] of ports.entries()) {
+        await waitFor(
+          async () => {
+            if (servers[i]!.proc.exitCode !== null)
+              throw new Error(`instance ${i} exited:\n${servers[i]!.log.text}`);
+            return (await fetch(`http://localhost:${port}/api/ready`)).ok ? true : undefined;
+          },
+          30_000,
+          `instance ${i} ready`,
+        ).catch((err: Error) => {
+          throw new Error(`${err.message}\n--- instance ${i} log:\n${servers[i]!.log.text}`);
+        });
+      }
+      const pool = new pg.Pool({ connectionString: scratch.url });
+      const { rows } = await pool.query<{ total: number; distinct: number }>(
+        "select count(*)::int as total, count(distinct hash)::int as distinct from drizzle.__drizzle_migrations",
+      );
+      await pool.end();
+      expect(rows[0]).toEqual({
+        total: migrationJournal.entries.length,
+        distinct: migrationJournal.entries.length,
+      });
+      const applied = servers.map((s) => /Applied (\d+) migration/.exec(s.log.text)?.[1] ?? "0");
+      expect(applied.map(Number).sort()).toEqual([0, migrationJournal.entries.length]);
+    } finally {
+      for (const s of servers) {
+        if (s.proc.exitCode === null) {
+          const exited = once(s.proc, "exit");
+          s.proc.kill("SIGTERM");
+          await exited;
+        }
+      }
+      await scratch.drop();
+    }
+  }, 60_000);
+
+  it("FLOWOS_MIGRATE_ON_START saved as 'True ' still migrates (as on Render)", async () => {
+    // Regression: only the exact string "true" turned migrations on; anything else skipped them
+    // silently and the server then refused to start with "14 migration(s) not applied".
+    const scratch = await createScratchDatabase("boot_switch");
+    try {
+      const port = await freePort();
+      const { proc, log } = startServer({
+        ...childEnv(port),
+        DATABASE_URL: scratch.url,
+        FLOWOS_MIGRATE_ON_START: "True ",
+        FLOWOS_WORKER: "false",
+      });
+      try {
+        await waitFor(
+          async () => ((await fetch(`http://localhost:${port}/api/ready`)).ok ? true : undefined),
+          20_000,
+          "readiness with FLOWOS_MIGRATE_ON_START='True '",
+        );
+        expect(log.text).toContain("Startup migrations: on.");
+        expect(log.text).toContain(`Applied ${migrationJournal.entries.length} migration(s) at startup.`);
+      } finally {
+        const exited = once(proc, "exit");
+        proc.kill("SIGTERM");
+        await exited;
+      }
+    } finally {
+      await scratch.drop();
+    }
+  }, 45_000);
+
+  it("explains a refusal: which database, and whether FLOWOS_MIGRATE_ON_START reached the process", async () => {
+    const scratch = await createScratchDatabase("boot_explain");
+    try {
+      const run = async (value: string | undefined) => {
+        const port = await freePort();
+        const env: NodeJS.ProcessEnv = {
+          ...childEnv(port),
+          DATABASE_URL: scratch.url,
+          FLOWOS_WORKER: "false",
+        };
+        if (value !== undefined) env.FLOWOS_MIGRATE_ON_START = value;
+        const { proc, log } = startServer(env);
+        const [code] = (await once(proc, "exit")) as [number | null];
+        return { code, text: log.text };
+      };
+      const u = new URL(scratch.url);
+      const shown = `${u.hostname}${u.port ? `:${u.port}` : ""}${u.pathname}`;
+
+      const unset = await run(undefined);
+      expect(unset.code).toBe(1);
+      expect(unset.text).toContain(`Database: ${shown}. Startup migrations: off.`);
+      expect(unset.text).toContain(`not applied in ${shown}`);
+      expect(unset.text).toContain("FLOWOS_MIGRATE_ON_START is not set in this process");
+
+      const off = await run("false");
+      expect(off.text).toContain('FLOWOS_MIGRATE_ON_START is "false", which means off.');
+
+      const typo = await run("ture");
+      expect(typo.code).toBe(1);
+      expect(typo.text).toContain(
+        'FLOWOS_MIGRATE_ON_START must be true or false (1/0, yes/no and on/off also work); got "ture".',
+      );
+
+      for (const r of [unset, off, typo]) {
+        expect(r.text).not.toContain(`${u.username}:${u.password}@`);
+        expect(r.text).not.toContain("worker tick failed");
+      }
+    } finally {
+      await scratch.drop();
+    }
+  }, 60_000);
 
   it("the migration tool runs in production without the web server's settings", async () => {
     const migrateFile = path.join(outDir!, "migrate.js");

@@ -1,6 +1,4 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { rmSync } from "node:fs";
 import { getTableName, isTable, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
@@ -8,7 +6,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as schema from "../src/db/schema";
 import { MIGRATIONS_FOLDER, pendingMigrations } from "../src/db/schema-status";
-import { createScratchDatabase, db } from "./helpers";
+import { createScratchDatabase, db, migrationJournal as journal, olderMigrations } from "./helpers";
 
 /**
  * Regression for a deployment whose migrations never ran (or stopped at an
@@ -18,21 +16,6 @@ import { createScratchDatabase, db } from "./helpers";
 const tables = Object.values(schema)
   .filter((v) => isTable(v))
   .map((t) => getTableName(t as never));
-const journal = JSON.parse(readFileSync(path.join(MIGRATIONS_FOLDER, "meta/_journal.json"), "utf8")) as {
-  entries: Array<{ tag: string }>;
-};
-
-/** A copy of the migrations folder holding only the first `count` migrations. */
-function olderMigrations(count: number): string {
-  const dir = mkdtempSync(path.join(tmpdir(), "flowos-migrations-"));
-  cpSync(MIGRATIONS_FOLDER, dir, { recursive: true });
-  writeFileSync(
-    path.join(dir, "meta/_journal.json"),
-    JSON.stringify({ ...journal, entries: journal.entries.slice(0, count) }),
-  );
-  return dir;
-}
-
 describe("database schema and migrations", () => {
   it("every table the code uses is created by the migrations", async () => {
     const rows = (

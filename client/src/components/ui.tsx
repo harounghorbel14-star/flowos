@@ -1,9 +1,10 @@
-import { AlertTriangle, ChevronLeft, ChevronRight, Inbox, RotateCw, X } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Eye, EyeOff, Inbox, RotateCw, X } from "lucide-react";
 import {
   forwardRef,
   useEffect,
   useId,
   useRef,
+  useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
@@ -143,6 +144,45 @@ export function TextField({
         aria-describedby={describedBy}
         {...rest}
       />
+    </FieldShell>
+  );
+}
+
+/** Password input with a show/hide toggle; the text is hidden again on every new page. */
+export function PasswordField({
+  label,
+  error,
+  help,
+  ...rest
+}: FieldProps & Omit<InputHTMLAttributes<HTMLInputElement>, "type">) {
+  const { id, describedBy } = useFieldIds(error, help);
+  const [visible, setVisible] = useState(false);
+  return (
+    <FieldShell id={id} label={label} error={error} help={help}>
+      <div className="input-with-action">
+        <input
+          id={id}
+          className="input"
+          type={visible ? "text" : "password"}
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy}
+          {...rest}
+        />
+        <button
+          type="button"
+          className="input-action"
+          onClick={() => setVisible((v) => !v)}
+          aria-label={visible ? "Hide password" : "Show password"}
+          aria-pressed={visible}
+          aria-controls={id}
+          title={visible ? "Hide password" : "Show password"}
+        >
+          {visible ? <EyeOff size={16} aria-hidden /> : <Eye size={16} aria-hidden />}
+        </button>
+      </div>
     </FieldShell>
   );
 }

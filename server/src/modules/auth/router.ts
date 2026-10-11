@@ -37,6 +37,24 @@ export const authRouter = router({
       return { user };
     }),
 
+  /** "Forgot password?": same answer for every email; see service.requestPasswordReset. */
+  requestPasswordReset: publicProcedure
+    .input(z.object({ email: z.string().trim().email().max(254) }))
+    .mutation(async ({ ctx, input }) => {
+      const { emailEnabled, delivery } = await service.requestPasswordReset(ctx.db, input, {
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+      });
+      void delivery; // finishes after the response; failures are logged
+      return { ok: true as const, emailEnabled };
+    }),
+
+  resetPassword: publicProcedure
+    .input(z.object({ token: z.string().min(20).max(200), password }))
+    .mutation(({ ctx, input }) =>
+      service.resetPassword(ctx.db, input, { ip: ctx.ip, userAgent: ctx.userAgent }),
+    ),
+
   changePassword: authedProcedure
     .input(z.object({ currentPassword: z.string().max(200), newPassword: password }))
     .mutation(({ ctx, input }) =>

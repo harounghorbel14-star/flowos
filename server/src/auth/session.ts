@@ -89,6 +89,12 @@ export async function revokeOtherSessions(db: Tx, userId: string, keepSessionId:
   return result.rowCount ?? 0;
 }
 
+/** Sign the user out everywhere (password reset by email link). */
+export async function revokeAllSessions(db: Tx, userId: string): Promise<number> {
+  const result = await db.delete(sessions).where(eq(sessions.userId, userId));
+  return result.rowCount ?? 0;
+}
+
 /** Delete expired sessions (they are already rejected on use). */
 export async function purgeExpiredSessions(db: Database): Promise<number> {
   const result = await db.delete(sessions).where(lt(sessions.expiresAt, new Date()));

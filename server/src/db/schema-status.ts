@@ -32,10 +32,26 @@ export async function pendingMigrations(
   return expected.filter((m) => m.folderMillis > Number(last)).length;
 }
 
-export function schemaBehindMessage(pending: number): string {
+/**
+ * Why the server refuses to start, and how to fix it. `migrateOnStart.raw` is what this process
+ * actually received for FLOWOS_MIGRATE_ON_START (a switch, not a secret).
+ */
+export function schemaBehindMessage(
+  pending: number,
+  context: { database?: string; migrateOnStart?: { enabled: boolean; raw: string | undefined } } = {},
+): string {
+  const where = context.database ? ` in ${context.database}` : "";
+  const sw = context.migrateOnStart;
+  const switchState = !sw
+    ? ""
+    : sw.enabled
+      ? ""
+      : sw.raw === undefined
+        ? "FLOWOS_MIGRATE_ON_START is not set in this process (if you set it on your host, check the exact name, that it belongs to this service, and redeploy so the running service receives it). "
+        : `FLOWOS_MIGRATE_ON_START is ${JSON.stringify(sw.raw)}, which means off. `;
   return (
-    `Database schema is behind this version: ${pending} migration(s) not applied. ` +
+    `Database schema is behind this version: ${pending} migration(s) not applied${where}. ${switchState}` +
     "Apply them first: `node dist/server/migrate.js` as the release / pre-deploy step " +
-    "(`npm run db:migrate` in development), or set FLOWOS_MIGRATE_ON_START=true on a single instance."
+    "(`npm run db:migrate` in development), or set FLOWOS_MIGRATE_ON_START=true when the host has no release step."
   );
 }
