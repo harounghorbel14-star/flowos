@@ -111,6 +111,15 @@ to start in that state and names the fix, instead of running half-broken.
    log `Database schema is up to date.`
 4. `https://<staging>/api/ready` → `{"ok":true}`; then run the smoke test below.
 
+The first log line says what the server received:
+`Database: <host>/<name>. Startup migrations: on.` (or `off.`). If it says
+`off` although you set the variable, or the refusal says
+`FLOWOS_MIGRATE_ON_START is not set in this process`, the running service did
+not receive it: check the exact name, that it is on this web service (not the
+database or an unlinked environment group), and deploy again (_Save, rebuild,
+and deploy_, not _Save only_). `True`, `1`, `yes`, extra spaces or quotes all
+count as on; an unrecognized value stops the server with a message naming it.
+
 With `FLOWOS_MIGRATE_ON_START=true` the server applies pending migrations
 before the API and the worker start, using `DATABASE_URL`, under a PostgreSQL
 advisory lock: instances starting at the same time (an overlapping deploy)

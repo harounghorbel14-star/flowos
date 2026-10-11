@@ -40,6 +40,43 @@ export function env(): Env {
 
 export const isProduction = () => env().NODE_ENV === "production";
 
+const ON = new Set(["true", "1", "yes", "on"]);
+const OFF = new Set(["false", "0", "no", "off", ""]);
+
+/**
+ * An on/off switch such as FLOWOS_MIGRATE_ON_START. Hosting dashboards make it easy to save
+ * "True", "true " or "\"true\"": case, surrounding spaces and quotes are ignored, and 1/0,
+ * yes/no, on/off are accepted. Anything else is an error rather than a silent "off".
+ * Switch values are not secrets, so errors may quote them.
+ */
+export function readSwitch(
+  name: string,
+  source: NodeJS.ProcessEnv = process.env,
+): { enabled: boolean; raw: string | undefined } {
+  const raw = source[name];
+  if (raw === undefined) return { enabled: false, raw };
+  const value = raw
+    .trim()
+    .replace(/^(["'])(.*)\1$/, "$2")
+    .trim()
+    .toLowerCase();
+  if (ON.has(value)) return { enabled: true, raw };
+  if (OFF.has(value)) return { enabled: false, raw };
+  throw new Error(
+    `${name} must be true or false (1/0, yes/no and on/off also work); got ${JSON.stringify(raw.slice(0, 20))}.`,
+  );
+}
+
+/** "host:port/database" for logs: never the user name or password. */
+export function describeDatabase(url: string = env().DATABASE_URL): string {
+  try {
+    const u = new URL(url);
+    return `${u.hostname}${u.port ? `:${u.port}` : ""}${u.pathname}`;
+  } catch {
+    return "(unparseable DATABASE_URL)";
+  }
+}
+
 /**
  * The web server's extra production requirements. Only the server checks them:
  * release tools (migrations, seed, flags) need just the database.
