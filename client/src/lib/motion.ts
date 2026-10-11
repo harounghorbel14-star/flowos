@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 /** Motion helpers. Durations and easings live in styles.css (--dur-*, --ease*). */
 
 export function prefersReducedMotion(): boolean {
@@ -52,4 +54,38 @@ export function syncDialog(dialog: HTMLDialogElement, open: boolean, onClosed?: 
     window.clearTimeout(timer);
     dialog.removeEventListener("animationend", onEnd);
   };
+}
+
+/** What each counter last showed, so revisiting a page or a refetch with the same value never replays. */
+const lastShown = new Map<string, number>();
+
+/**
+ * A number that eases to `value` when it first appears and whenever it actually changes.
+ * `key` identifies the counter across remounts. Integers only; reduced motion shows the value.
+ */
+export function useCountUp(value: number, key: string, durationMs = 560): number {
+  const from = lastShown.get(key) ?? 0;
+  const [shown, setShown] = useState(prefersReducedMotion() ? value : from);
+  useEffect(() => {
+    const start = lastShown.get(key) ?? 0;
+    lastShown.set(key, value);
+    if (start === value || prefersReducedMotion()) {
+      setShown(value);
+      return;
+    }
+    let frame = 0;
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - t0) / durationMs);
+      const eased = 1 - (1 - p) ** 3; // ease-out cubic, like --ease
+      setShown(Math.round(start + (value - start) * eased));
+      if (p < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(frame);
+      setShown(value);
+    };
+  }, [value, key, durationMs]);
+  return shown;
 }

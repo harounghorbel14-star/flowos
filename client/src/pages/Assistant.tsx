@@ -1,4 +1,15 @@
-import { Check, MessageSquarePlus, Search, Send, Sparkles, Trash2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  MessageSquarePlus,
+  RotateCw,
+  Send,
+  Sparkles,
+  Square,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useToast } from "../components/toast";
@@ -25,19 +36,31 @@ type StreamEvent =
   | { type: "done"; stopReason: string | null }
   | { type: "error"; message: string };
 
-const TOOL_LABELS: Record<string, string> = {
-  get_operational_snapshot: "Checked the operational snapshot",
-  get_weekly_trends: "Checked weekly trends",
-  search_people: "Searched people",
-  get_person: "Opened a profile",
-  list_tasks: "Looked up tasks",
-  get_task: "Opened a task",
-  list_projects: "Looked up projects",
-  list_my_approvals: "Checked approvals",
-  search_documents: "Searched documents",
-  create_task: "Prepared a new task",
-  update_task_status: "Prepared a status change",
+/** [while running, once the backend has moved on] */
+const TOOL_LABELS: Record<string, [string, string]> = {
+  get_operational_snapshot: ["Checking the operational snapshot", "Checked the operational snapshot"],
+  get_weekly_trends: ["Checking weekly trends", "Checked weekly trends"],
+  search_people: ["Searching people", "Searched people"],
+  get_person: ["Opening a profile", "Opened a profile"],
+  list_tasks: ["Looking up tasks", "Looked up tasks"],
+  get_task: ["Opening a task", "Opened a task"],
+  list_projects: ["Looking up projects", "Looked up projects"],
+  list_my_approvals: ["Checking approvals", "Checked approvals"],
+  search_documents: ["Searching documents", "Searched documents"],
+  create_task: ["Preparing a new task", "Prepared a new task"],
+  update_task_status: ["Preparing a status change", "Prepared a status change"],
 };
+
+/** One tool step. "running" only while the stream has not moved past it. */
+function ToolStep({ name, running }: { name: string; running: boolean }) {
+  const [busy, done] = TOOL_LABELS[name] ?? [name, name];
+  return (
+    <div className={running ? "tool-step running" : "tool-step"}>
+      {running ? <RotateCw size={13} className="spin" aria-hidden /> : <Check size={13} aria-hidden />}
+      {running ? `${busy}…` : done}
+    </div>
+  );
+}
 
 const SUGGESTIONS = [
   "What needs my attention today?",
@@ -87,7 +110,8 @@ function ActionCard({ action, onChanged }: { action: Action; onChanged(): void }
   const toast = useToast();
   const confirm = trpc.ai.confirmAction.useMutation({
     onSuccess: (r) => {
-      if (r.status === "EXECUTED") toast.success("Done.");
+      // Only the backend's answer decides what the person is told.
+      if (r.status === "EXECUTED") toast.success(`Done: ${action.summary}`);
       else toast.error(new Error(r.error ?? "The action failed."));
       onChanged();
     },
@@ -116,11 +140,12 @@ function ActionCard({ action, onChanged }: { action: Action; onChanged(): void }
       }[action.status];
   return (
     <div
-      className="panel panel-body"
-      style={{
-        boxShadow: "none",
-        borderColor: action.status === "PROPOSED" && !expired ? "var(--attention)" : undefined,
-      }}
+      className={[
+        "panel panel-body action-card",
+        action.status === "PROPOSED" && !expired ? "waiting" : "",
+        action.status === "EXECUTED" ? "executed" : "",
+        action.status === "FAILED" ? "failed" : "",
+      ].join(" ")}
     >
       <div className="spread" style={{ alignItems: "flex-start" }}>
         <div>
@@ -128,7 +153,16 @@ function ActionCard({ action, onChanged }: { action: Action; onChanged(): void }
             Prepared action — nothing changes until you confirm
           </p>
           <strong>{action.summary}</strong>
-          {action.error ? <div style={{ color: "var(--critical)", fontSize: 13 }}>{action.error}</div> : null}
+          {action.status === "EXECUTED" ? (
+            <div className="action-result good">
+              <CheckCircle2 size={14} aria-hidden /> Applied
+            </div>
+          ) : null}
+          {action.error ? (
+            <div className="action-result critical">
+              <AlertTriangle size={14} aria-hidden /> {action.error}
+            </div>
+          ) : null}
           {action.status === "EXECUTED" && action.result && typeof action.result.taskId === "string" ? (
             <div style={{ fontSize: 13 }}>
               <Link to={`/tasks/${action.result.taskId}`}>Open task</Link>
@@ -165,6 +199,7 @@ function Transcript({ id }: { id: string }) {
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState<{ text: string; tools: string[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [stopped, setStopped] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -180,6 +215,7 @@ function Transcript({ id }: { id: string }) {
     if (!text.trim() || streaming) return;
     setDraft("");
     setError(null);
+    setStopped(false);
     setStreaming({ text: "", tools: [] });
     const controller = new AbortController();
     abortRef.current = controller;
@@ -232,9 +268,7 @@ function Transcript({ id }: { id: string }) {
           return action ? (
             <ActionCard key={i} action={action} onChanged={() => void refresh()} />
           ) : (
-            <div key={i} className="faint row" style={{ fontSize: 12.5, gap: 6 }}>
-              <Search size={13} aria-hidden /> {TOOL_LABELS[item.name] ?? item.name}
-            </div>
+            <ToolStep key={i} name={item.name} running={false} />
           );
         }
         return (
@@ -246,14 +280,30 @@ function Transcript({ id }: { id: string }) {
       {streaming ? (
         <>
           {streaming.tools.map((t, i) => (
-            <div key={i} className="faint row" style={{ fontSize: 12.5, gap: 6 }}>
-              <Search size={13} aria-hidden /> {TOOL_LABELS[t] ?? t}
-            </div>
+            // A tool is running until the stream moves on: more text, or the next tool.
+            <ToolStep key={i} name={t} running={i === streaming.tools.length - 1 && !streaming.text} />
           ))}
-          <div className="chat-bubble assistant" aria-live="polite">
-            <div className="prose">{streaming.text || <span className="faint">Working…</span>}</div>
+          <div className="chat-bubble assistant">
+            {streaming.text ? (
+              <div className="prose">{streaming.text}</div>
+            ) : (
+              <span className="typing" aria-hidden>
+                <span />
+                <span />
+                <span />
+              </span>
+            )}
           </div>
         </>
+      ) : null}
+      {/* One short announcement per turn instead of re-reading the growing text. */}
+      <span className="sr-only" role="status">
+        {streaming ? "The assistant is responding." : ""}
+      </span>
+      {stopped ? (
+        <p className="faint" style={{ margin: 0, fontSize: 12.5 }}>
+          Stopped. Nothing was changed.
+        </p>
       ) : null}
       {error ? <div className="form-error">{error}</div> : null}
       <div ref={endRef} />
@@ -283,15 +333,24 @@ function Transcript({ id }: { id: string }) {
             }
           }}
         />
-        <Button
-          type="submit"
-          variant="primary"
-          icon
-          aria-label="Send"
-          disabled={!draft.trim() || Boolean(streaming)}
-        >
-          <Send aria-hidden />
-        </Button>
+        {streaming ? (
+          <Button
+            type="button"
+            icon
+            aria-label="Stop"
+            title="Stop the answer"
+            onClick={() => {
+              abortRef.current?.abort();
+              setStopped(true);
+            }}
+          >
+            <Square aria-hidden />
+          </Button>
+        ) : (
+          <Button type="submit" variant="primary" icon aria-label="Send" disabled={!draft.trim()}>
+            <Send aria-hidden />
+          </Button>
+        )}
       </form>
       {convo.data.usage && convo.data.usage.requests > 0 ? (
         <p className="faint" style={{ fontSize: 12, margin: 0 }}>
