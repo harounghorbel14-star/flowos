@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 /*
  * Small SVG chart kit following the data-viz spec: thin marks, 4px rounded
@@ -205,6 +205,7 @@ export function ColumnChart({
               onFocus={() => setHover(i)}
               onBlur={() => setHover(null)}
               className={hover === i ? "chart-group active" : "chart-group"}
+              style={{ "--i": i } as CSSProperties}
             >
               <rect
                 x={MARGIN.left + band * i}
@@ -393,6 +394,8 @@ export function LineChart({
           return (
             <g key={s.key} clipPath={`url(#${clipId})`}>
               <path
+                className="chart-line"
+                pathLength={1}
                 d={segments(vals)}
                 fill="none"
                 stroke={s.color}

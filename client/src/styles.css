@@ -45,7 +45,15 @@
   --shadow: 0 1px 0 rgba(27, 28, 26, 0.04), 0 8px 24px -12px rgba(27, 28, 26, 0.18);
   --shadow-lg: 0 24px 60px -20px rgba(27, 28, 26, 0.35);
   --focus: 0 0 0 3px color-mix(in srgb, var(--teal) 35%, transparent);
-  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  /* Motion: short, decelerating, never bouncy. Reduced motion collapses all of it (see bottom). */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1); /* enter / respond */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1); /* leave */
+  --ease-in-out: cubic-bezier(0.45, 0, 0.25, 1); /* move / morph */
+  --dur-instant: 80ms; /* press */
+  --dur-fast: 120ms; /* hover, colour */
+  --dur-base: 180ms; /* dialogs, toasts, menus */
+  --dur-slow: 260ms; /* page, drawer */
+  --dur-data: 560ms; /* charts, progress, counters */
 
   color-scheme: light;
 }
@@ -146,7 +154,9 @@ textarea {
   color: inherit;
 }
 :focus-visible {
-  outline: none;
+  /* Transparent outline: invisible normally, drawn by the OS in forced-colors (high contrast) mode. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: var(--focus);
   border-radius: var(--radius-sm);
 }
@@ -278,7 +288,7 @@ h3 {
   width: 100%;
   text-align: left;
   cursor: pointer;
-  transition: background 120ms var(--ease);
+  transition: background var(--dur-fast) var(--ease);
 }
 .rail .nav:hover {
   background: var(--rail-hover);
@@ -368,7 +378,7 @@ kbd {
   max-width: 1240px;
   margin: 0 auto;
   padding: 32px 40px 64px;
-  animation: page-in 220ms var(--ease);
+  animation: page-in var(--dur-slow) var(--ease);
 }
 @keyframes page-in {
   from {
@@ -476,7 +486,7 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  transition: background 120ms var(--ease);
+  transition: background var(--dur-fast) var(--ease);
 }
 .metric:last-child {
   border-right: 0;
@@ -559,7 +569,7 @@ a.metric:hover {
   padding: 11px 18px;
   text-decoration: none;
   min-width: 0;
-  transition: background 120ms var(--ease);
+  transition: background var(--dur-fast) var(--ease);
 }
 a.list-item:hover {
   background: var(--paper-sunk);
@@ -606,7 +616,7 @@ table.data tr:last-child td {
   border-bottom: 0;
 }
 table.data tbody tr {
-  transition: background 120ms var(--ease);
+  transition: background var(--dur-fast) var(--ease);
 }
 table.data tbody tr:hover {
   background: var(--paper-sunk);
@@ -699,9 +709,11 @@ table.data a.row-link:hover {
   text-decoration: none;
   white-space: nowrap;
   transition:
-    background 120ms var(--ease),
-    border-color 120ms var(--ease),
-    transform 80ms var(--ease);
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease),
+    transform var(--dur-instant) var(--ease);
 }
 .btn:hover {
   background: var(--paper-sunk);
@@ -774,7 +786,9 @@ table.data a.row-link:hover {
   border-radius: 8px;
   border: 1px solid var(--line-strong);
   background: var(--paper-raised);
-  transition: border-color 120ms var(--ease);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 .textarea {
   height: auto;
@@ -910,6 +924,27 @@ table.data a.row-link:hover {
   border-radius: 50%;
   background: currentColor;
 }
+/* A status that just changed (never on first render): a short settle, plus a ring on the dot. */
+.badge.changed {
+  animation: badge-settle var(--dur-slow) var(--ease);
+}
+.badge.changed.dot::before {
+  animation: dot-ring calc(var(--dur-slow) * 2) var(--ease);
+}
+@keyframes badge-settle {
+  from {
+    opacity: 0.4;
+    transform: scale(0.94);
+  }
+}
+@keyframes dot-ring {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
 .badge.critical {
   background: var(--critical-wash);
   color: var(--critical);
@@ -971,10 +1006,22 @@ table.data a.row-link:hover {
   height: 100%;
   background: var(--teal);
   border-radius: inherit;
-  transition: width 400ms var(--ease);
+  transition: width var(--dur-data) var(--ease);
+  transform-origin: left;
+  animation: progress-in var(--dur-data) var(--ease);
+}
+
+@keyframes progress-in {
+  from {
+    transform: scaleX(0);
+  }
 }
 
 /* ─── States ─────────────────────────────────────────────────────────────── */
+.empty,
+.error-state {
+  animation: fade-in var(--dur-base) var(--ease);
+}
 .empty {
   text-align: center;
   padding: 40px 24px;
@@ -1043,13 +1090,42 @@ dialog.modal::backdrop {
   background: rgba(20, 21, 19, 0.45);
   backdrop-filter: blur(2px);
 }
-dialog.modal[open] {
-  animation: dialog-in 160ms var(--ease);
+dialog.modal[open],
+dialog.palette[open] {
+  animation: dialog-in var(--dur-base) var(--ease);
+}
+dialog.modal[open]::backdrop,
+dialog.palette[open]::backdrop {
+  animation: fade-in var(--dur-base) var(--ease);
+}
+dialog.modal.closing,
+dialog.palette.closing {
+  animation: dialog-out var(--dur-fast) var(--ease-in) forwards;
+}
+dialog.modal.closing::backdrop,
+dialog.palette.closing::backdrop {
+  animation: fade-out var(--dur-fast) var(--ease-in) forwards;
 }
 @keyframes dialog-in {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.99);
+    transform: translateY(8px) scale(0.985);
+  }
+}
+@keyframes dialog-out {
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.99);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes fade-out {
+  to {
+    opacity: 0;
   }
 }
 .modal-head {
@@ -1164,11 +1240,50 @@ dialog.palette::backdrop {
   gap: 10px;
   align-items: center;
   min-width: 260px;
-  animation: dialog-in 160ms var(--ease);
+  animation: toast-in var(--dur-base) var(--ease);
+}
+.toast.leaving {
+  animation: toast-out var(--dur-base) var(--ease-in) forwards;
 }
 .toast.error {
   background: var(--critical);
   color: var(--on-critical);
+}
+.toast-text {
+  flex: 1;
+}
+.toast-close {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: -4px -6px -4px 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  transition:
+    opacity var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+.toast-close:hover,
+.toast-close:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateX(12px);
+  }
 }
 
 /* ─── Board ──────────────────────────────────────────────────────────────── */
@@ -1198,8 +1313,9 @@ dialog.palette::backdrop {
   flex-direction: column;
   gap: 6px;
   transition:
-    border-color 120ms var(--ease),
-    transform 120ms var(--ease);
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 .board-card > * {
   min-width: 0;
@@ -1413,14 +1529,14 @@ dialog.palette::backdrop {
     /* Hidden (and so unfocusable) once the slide-out finishes. */
     visibility: hidden;
     transition:
-      transform 200ms var(--ease),
-      visibility 0s linear 200ms;
+      transform var(--dur-slow) var(--ease-in),
+      visibility 0s linear var(--dur-slow);
   }
   .shell.nav-open .rail {
     transform: none;
     visibility: visible;
     box-shadow: var(--shadow-lg);
-    transition: transform 200ms var(--ease);
+    transition: transform var(--dur-slow) var(--ease);
   }
   .scrim {
     position: fixed;
@@ -1588,6 +1704,29 @@ dialog.palette::backdrop {
 .chart-group.active path {
   filter: brightness(1.12);
 }
+/* Entrances run once, when the marks mount (first load or a new range), never on hover. */
+.chart-group path {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: bar-grow var(--dur-data) var(--ease) both;
+  /* A light left-to-right stagger, capped so a 12-week chart finishes in well under a second. */
+  animation-delay: calc(min(var(--i, 0), 12) * 18ms);
+  transition: filter var(--dur-fast) var(--ease);
+}
+.chart-line {
+  stroke-dasharray: 1;
+  animation: line-draw calc(var(--dur-data) * 1.4) var(--ease-in-out) both;
+}
+@keyframes bar-grow {
+  from {
+    transform: scaleY(0);
+  }
+}
+@keyframes line-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
 .chart-group:focus-visible rect {
   fill: color-mix(in srgb, var(--teal) 8%, transparent);
 }
@@ -1604,6 +1743,7 @@ dialog.palette::backdrop {
   font-size: 12.5px;
   pointer-events: none;
   z-index: 2;
+  animation: fade-in var(--dur-fast) var(--ease);
 }
 .chart-tooltip-title {
   color: var(--ink-3);
