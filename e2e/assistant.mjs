@@ -1,4 +1,4 @@
-// Assistant UI scenario. Run against e2e/ai-harness.ts (scripted provider):
+// Assistant UI scenario in model mode. Run against e2e/ai-harness.ts (scripted runtime):
 //   E2E_BASE_URL=http://localhost:3200 node e2e/assistant.mjs
 import fs from "node:fs";
 import path from "node:path";
@@ -38,7 +38,12 @@ try {
     await page.waitForURL(/\/assistant\/[0-9a-f-]{36}$/);
     await page.getByRole("button", { name: "What needs my attention today?" }).click();
     await page.getByText("You have 0 open tasks, 0 overdue, and 0 approvals waiting for you.").waitFor();
-    await page.getByText("Checked the operational snapshot").waitFor();
+    // The run card shows the model's validated plan and the step FLOWOS actually executed.
+    const run = page.locator(".run-card").first();
+    await run.getByText("Model · scripted-e2e").waitFor();
+    await run.getByText("Summarize what needs attention").waitFor();
+    await run.getByText("get_operational_snapshot").waitFor();
+    await run.getByText("Completed").waitFor();
   });
 
   await step("a requested change is only prepared", async () => {
@@ -61,9 +66,9 @@ try {
     await page.getByRole("button", { name: "Confirm" }).first().click();
     await page.getByText("Executed").waitFor();
     // The result and the toast come from the backend's answer, never before it.
-    await page.getByText("Applied", { exact: true }).waitFor();
+    await page.getByText("Applied and verified").waitFor();
     await page
-      .getByText(/^Done: /)
+      .getByText(/^Done and verified: /)
       .first()
       .waitFor();
     await page.getByRole("link", { name: "Open task" }).click();
@@ -77,7 +82,9 @@ try {
     await page.getByLabel("Message").press("Enter");
     await page.getByText("This answer streams slowly").first().waitFor();
     await page.getByRole("button", { name: "Stop" }).click();
-    await page.getByText("Stopped. Nothing was changed.").waitFor();
+    await page
+      .getByText("Stopped. Steps that had not run were cancelled; nothing else was changed.")
+      .waitFor();
     await page.getByRole("button", { name: "Send" }).waitFor();
     // The working mark is shown only while a reply is genuinely on its way.
     if (await page.locator(".assistant-working").count()) throw new Error("activity mark left after Stop");

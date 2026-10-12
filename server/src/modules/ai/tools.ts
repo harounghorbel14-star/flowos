@@ -169,7 +169,7 @@ export const TOOLS: readonly ToolDef[] = [
     summarize: (o) => {
       const r = o as Awaited<ReturnType<typeof blockedWork>>;
       const blocked = r.projects.filter((p) => p.appearsBlocked).length;
-      return `${plural(blocked, "project")} appear blocked; ${plural(r.blockedTaskCount, "task")} marked Blocked`;
+      return `${plural(blocked, "project")} ${blocked === 1 ? "appears" : "appear"} blocked; ${plural(r.blockedTaskCount, "task")} marked Blocked`;
     },
   }),
   def({

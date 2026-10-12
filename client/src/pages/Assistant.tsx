@@ -1,16 +1,22 @@
 import {
   AlertTriangle,
+  Ban,
+  Brain,
   Check,
   CheckCircle2,
+  Circle,
+  Hand,
   MessageSquarePlus,
+  Minus,
   RotateCw,
   Send,
+  ShieldCheck,
   Sparkles,
   Square,
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { LogoMark } from "../components/brand";
 import { useToast } from "../components/toast";
@@ -29,45 +35,51 @@ import { errorMessage, getActiveOrgId, trpc, type RouterOutputs } from "../lib/t
 
 type Conversation = RouterOutputs["ai"]["conversation"];
 type Action = Conversation["actions"][number];
+type Run = Conversation["runs"][number];
+type Step = Run["steps"][number];
+type Report = NonNullable<Run["report"]>;
+type Status = RouterOutputs["ai"]["status"];
 
 type StreamEvent =
+  | {
+      type: "run";
+      run: {
+        id: string;
+        mode: "rules" | "model";
+        model: string | null;
+        objective: string;
+        intent: string | null;
+      };
+    }
+  | { type: "plan"; steps: Step[] }
+  | { type: "step"; step: Step }
   | { type: "text"; delta: string }
   | { type: "tool"; name: string; outcome: string }
   | { type: "action"; action: { id: string } }
+  | { type: "report"; report: Report }
   | { type: "done"; stopReason: string | null }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; kind?: string };
 
-/** [while running, once the backend has moved on] */
-const TOOL_LABELS: Record<string, [string, string]> = {
-  get_operational_snapshot: ["Checking the operational snapshot", "Checked the operational snapshot"],
-  get_weekly_trends: ["Checking weekly trends", "Checked weekly trends"],
-  search_people: ["Searching people", "Searched people"],
-  get_person: ["Opening a profile", "Opened a profile"],
-  list_tasks: ["Looking up tasks", "Looked up tasks"],
-  get_task: ["Opening a task", "Opened a task"],
-  list_projects: ["Looking up projects", "Looked up projects"],
-  list_my_approvals: ["Checking approvals", "Checked approvals"],
-  search_documents: ["Searching documents", "Searched documents"],
-  create_task: ["Preparing a new task", "Prepared a new task"],
-  update_task_status: ["Preparing a status change", "Prepared a status change"],
-};
-
-/** One tool step. "running" only while the stream has not moved past it. */
-function ToolStep({ name, running }: { name: string; running: boolean }) {
-  const [busy, done] = TOOL_LABELS[name] ?? [name, name];
-  return (
-    <div className={running ? "tool-step running" : "tool-step"}>
-      {running ? <RotateCw size={13} className="spin" aria-hidden /> : <Check size={13} aria-hidden />}
-      {running ? `${busy}…` : done}
-    </div>
-  );
+/** What the stream has told us so far. Nothing here is assumed: each field mirrors an event. */
+interface Live {
+  run: {
+    id: string;
+    mode: "rules" | "model";
+    model: string | null;
+    objective: string;
+    intent: string | null;
+  } | null;
+  steps: Step[];
+  text: string;
+  report: Report | null;
 }
 
 const SUGGESTIONS = [
   "What needs my attention today?",
-  "Which projects are at risk, and why?",
-  "What is overdue for me?",
-  "Which approvals are waiting for my decision?",
+  "What should I prioritize today?",
+  "Which projects are blocked?",
+  "What are the most urgent overdue tasks?",
+  "Which approvals are waiting for me?",
 ];
 
 /** POST a message and stream NDJSON events back. */
@@ -107,12 +119,142 @@ async function streamTurn(
   }
 }
 
+// ─── Run card: objective, plan, step status, results ─────────────────────────
+
+const STEP: Record<Step["status"], { icon: ReactNode; label: string; tone?: string }> = {
+  PENDING: { icon: <Circle size={13} aria-hidden />, label: "Planned" },
+  RUNNING: { icon: <RotateCw size={13} className="spin" aria-hidden />, label: "Running" },
+  SUCCEEDED: { icon: <Check size={13} aria-hidden />, label: "Done", tone: "good" },
+  FAILED: { icon: <AlertTriangle size={13} aria-hidden />, label: "Failed", tone: "critical" },
+  SKIPPED: { icon: <Minus size={13} aria-hidden />, label: "Skipped" },
+  AWAITING_CONFIRMATION: {
+    icon: <Hand size={13} aria-hidden />,
+    label: "Waiting for you",
+    tone: "attention",
+  },
+  CANCELLED: { icon: <Ban size={13} aria-hidden />, label: "Stopped" },
+};
+
+const RUN_STATUS: Record<Run["status"], { label: string; tone?: string }> = {
+  RUNNING: { label: "Running" },
+  COMPLETED: { label: "Completed", tone: "good" },
+  PARTIAL: { label: "Partly completed", tone: "attention" },
+  AWAITING_CONFIRMATION: { label: "Waiting for confirmation", tone: "attention" },
+  FAILED: { label: "Failed", tone: "critical" },
+  CANCELLED: { label: "Stopped" },
+};
+
+function StepRow({ step }: { step: Step }) {
+  const s = STEP[step.status];
+  return (
+    <li className={["run-step", s.tone].filter(Boolean).join(" ")}>
+      <span className="run-step-icon" title={s.label}>
+        {s.icon}
+      </span>
+      <div className="grow">
+        <div>
+          {step.purpose}
+          {!step.planned ? <span className="run-tag">added after observing results</span> : null}
+        </div>
+        <div className="run-step-detail">
+          <span className="sr-only">{s.label}. </span>
+          {step.status === "SUCCEEDED" || step.status === "AWAITING_CONFIRMATION"
+            ? step.resultSummary
+            : (step.error ?? (step.status === "RUNNING" ? "Running…" : null))}
+          {step.attempts > 1 ? ` · ${step.attempts} attempts` : null}
+          {step.verified ? (
+            <span className="run-verified">
+              <ShieldCheck size={12} aria-hidden /> verified
+            </span>
+          ) : null}
+        </div>
+      </div>
+      <code className="run-step-tool">{step.tool}</code>
+    </li>
+  );
+}
+
+function RunCard({
+  run,
+  steps,
+  report,
+  live,
+}: {
+  run: {
+    mode: "rules" | "model";
+    model: string | null;
+    objective: string;
+    intent?: string | null;
+    status?: Run["status"];
+  };
+  steps: Step[];
+  report: Report | null;
+  live?: boolean;
+}) {
+  const status = report?.status ?? run.status;
+  // Rules mode with no recognised command did nothing: say so rather than "Completed".
+  const notUnderstood = run.mode === "rules" && run.intent === null && steps.length === 0;
+  const s =
+    status && !live
+      ? notUnderstood
+        ? { label: "Not understood", tone: undefined }
+        : RUN_STATUS[status]
+      : null;
+  return (
+    <section className="run-card" aria-label={`Run: ${run.objective}`}>
+      <div className="run-head">
+        <span
+          className="run-mode"
+          title={
+            run.mode === "rules"
+              ? "Planned and executed by FLOWOS rules"
+              : "Planned with a language model; executed by FLOWOS"
+          }
+        >
+          {run.mode === "rules" ? <ShieldCheck size={13} aria-hidden /> : <Brain size={13} aria-hidden />}
+          {run.mode === "rules" ? "FLOWOS rules" : `Model · ${run.model ?? "unknown"}`}
+        </span>
+        <span className="run-objective">{run.objective}</span>
+        {s ? <Badge tone={s.tone}>{s.label}</Badge> : live ? <LogoMark size={16} state="working" /> : null}
+      </div>
+      {steps.length ? (
+        <ol className="run-steps">
+          {steps.map((step) => (
+            <StepRow key={step.id} step={step} />
+          ))}
+        </ol>
+      ) : null}
+      {report?.notes.length ? (
+        <ul className="run-notes">
+          {report.notes.map((n) => (
+            <li key={n}>{n}</li>
+          ))}
+        </ul>
+      ) : null}
+      {report?.evidence.length ? (
+        <div className="run-evidence">
+          <span className="faint">Based on:</span>
+          {report.evidence.slice(0, 8).map((e) => (
+            <Link key={`${e.kind}-${e.id}`} to={e.link}>
+              {e.label}
+            </Link>
+          ))}
+          {report.evidence.length > 8 ? (
+            <span className="faint">+{report.evidence.length - 8} more</span>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function ActionCard({ action, onChanged }: { action: Action; onChanged(): void }) {
   const toast = useToast();
   const confirm = trpc.ai.confirmAction.useMutation({
     onSuccess: (r) => {
       // Only the backend's answer decides what the person is told.
-      if (r.status === "EXECUTED") toast.success(`Done: ${action.summary}`);
+      if (r.status === "EXECUTED")
+        toast.success(r.verified ? `Done and verified: ${action.summary}` : `Done: ${action.summary}`);
       else toast.error(new Error(r.error ?? "The action failed."));
       onChanged();
     },
@@ -156,7 +298,7 @@ function ActionCard({ action, onChanged }: { action: Action; onChanged(): void }
           <strong>{action.summary}</strong>
           {action.status === "EXECUTED" ? (
             <div className="action-result good">
-              <CheckCircle2 size={14} aria-hidden /> Applied
+              <CheckCircle2 size={14} aria-hidden /> Applied{action.verified ? " and verified" : ""}
             </div>
           ) : null}
           {action.error ? (
@@ -194,11 +336,38 @@ function ActionCard({ action, onChanged }: { action: Action; onChanged(): void }
   );
 }
 
-function Transcript({ id }: { id: string }) {
+// ─── Transcript ──────────────────────────────────────────────────────────────
+
+type Item = Conversation["items"][number];
+type Block = { kind: "legacy"; item: Item } | { kind: "run"; runId: string; items: Item[] };
+
+/** Group the transcript by run; messages recorded before runs existed are shown as they were. */
+function blocksOf(items: Item[], runs: Run[]): Block[] {
+  const blocks: Block[] = [];
+  const byRun = new Map<string, Extract<Block, { kind: "run" }>>();
+  for (const item of items) {
+    if (!item.runId) {
+      blocks.push({ kind: "legacy", item });
+      continue;
+    }
+    let b = byRun.get(item.runId);
+    if (!b) {
+      b = { kind: "run", runId: item.runId, items: [] };
+      byRun.set(item.runId, b);
+      blocks.push(b);
+    }
+    b.items.push(item);
+  }
+  // A run with no messages of its own (none today) would still be shown after its predecessor.
+  for (const r of runs) if (!byRun.has(r.id)) blocks.push({ kind: "run", runId: r.id, items: [] });
+  return blocks;
+}
+
+function Transcript({ id, status }: { id: string; status: Status | undefined }) {
   const utils = trpc.useUtils();
   const convo = trpc.ai.conversation.useQuery({ id });
   const [draft, setDraft] = useState("");
-  const [streaming, setStreaming] = useState<{ text: string; tools: string[] } | null>(null);
+  const [live, setLive] = useState<Live | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stopped, setStopped] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -206,18 +375,22 @@ function Transcript({ id }: { id: string }) {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [convo.data?.items.length, streaming?.text, convo.data?.actions.length]);
+  }, [convo.data?.items.length, live?.text, live?.steps.length, convo.data?.actions.length]);
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const refresh = () =>
-    Promise.all([utils.ai.conversation.invalidate({ id }), utils.ai.conversations.invalidate()]);
+    Promise.all([
+      utils.ai.conversation.invalidate({ id }),
+      utils.ai.conversations.invalidate(),
+      utils.ai.memories.invalidate(),
+    ]);
 
   const send = async (text: string) => {
-    if (!text.trim() || streaming) return;
+    if (!text.trim() || live) return;
     setDraft("");
     setError(null);
     setStopped(false);
-    setStreaming({ text: "", tools: [] });
+    setLive({ run: null, steps: [], text: "", report: null });
     const controller = new AbortController();
     abortRef.current = controller;
     try {
@@ -225,10 +398,30 @@ function Transcript({ id }: { id: string }) {
         id,
         text,
         (e) => {
-          if (e.type === "text") setStreaming((s) => (s ? { ...s, text: s.text + e.delta } : s));
-          else if (e.type === "tool")
-            setStreaming((s) => (s ? { ...s, text: "", tools: [...s.tools, e.name] } : s));
-          else if (e.type === "action") void refresh();
+          setLive((l) => {
+            if (!l) return l;
+            switch (e.type) {
+              case "run":
+                // A second run in one turn (e.g. FLOWOS rules after the model was unreachable) starts fresh.
+                return { run: e.run, steps: [], text: "", report: null };
+              case "plan":
+                return { ...l, steps: e.steps };
+              case "step":
+                return {
+                  ...l,
+                  steps: l.steps.some((s) => s.id === e.step.id)
+                    ? l.steps.map((s) => (s.id === e.step.id ? e.step : s))
+                    : [...l.steps, e.step],
+                };
+              case "text":
+                return { ...l, text: l.text + e.delta };
+              case "report":
+                return { ...l, report: e.report };
+              default:
+                return l;
+            }
+          });
+          if (e.type === "action") void refresh();
           else if (e.type === "error") setError(e.message);
         },
         controller.signal,
@@ -236,23 +429,30 @@ function Transcript({ id }: { id: string }) {
     } catch (err) {
       if (!controller.signal.aborted) setError(errorMessage(err));
     } finally {
-      setStreaming(null);
+      setLive(null);
       await refresh();
     }
   };
 
   if (convo.error) return <ErrorState error={convo.error} />;
   if (!convo.data) return <SkeletonRows rows={4} />;
-  const actionsByToolUse = new Map(convo.data.actions.map((a) => [a.toolUseId, a]));
-  const empty = convo.data.items.length === 0 && !streaming;
+  const data = convo.data;
+  const runs = new Map(data.runs.map((r) => [r.id, r]));
+  const actionsByRun = new Map<string, Action[]>();
+  for (const a of data.actions)
+    if (a.runId) actionsByRun.set(a.runId, [...(actionsByRun.get(a.runId) ?? []), a]);
+  const legacyActions = new Map(data.actions.filter((a) => !a.runId).map((a) => [a.toolUseId, a]));
+  const empty = data.items.length === 0 && !live;
+  const ruleOnly = !status?.runtime;
 
   return (
     <div className="stack" style={{ gap: 14 }}>
       {empty ? (
         <div className="panel panel-body">
           <p className="muted" style={{ marginTop: 0 }}>
-            Ask about your organization’s live data. The assistant can look things up and prepare tasks or
-            status changes — you confirm every change yourself.
+            {ruleOnly
+              ? "No language model is configured, so FLOWOS answers with its own rules: it plans the steps, reads your live records, and shows each step and its evidence. Try one of these:"
+              : "Ask about your organization’s live data. FLOWOS checks every step against your permissions and shows what actually happened; you confirm every change yourself."}
           </p>
           <div className="row">
             {SUGGESTIONS.map((s) => (
@@ -263,32 +463,51 @@ function Transcript({ id }: { id: string }) {
           </div>
         </div>
       ) : null}
-      {convo.data.items.map((item, i) => {
-        if (item.kind === "tool") {
-          const action = actionsByToolUse.get(item.toolUseId);
-          return action ? (
-            <ActionCard key={i} action={action} onChanged={() => void refresh()} />
-          ) : (
-            <ToolStep key={i} name={item.name} running={false} />
+      {blocksOf(data.items, data.runs).map((block, i) => {
+        if (block.kind === "legacy") {
+          const item = block.item;
+          if (item.kind === "tool") {
+            const action = legacyActions.get(item.toolUseId);
+            return action ? <ActionCard key={i} action={action} onChanged={() => void refresh()} /> : null;
+          }
+          return (
+            <div key={i} className={item.kind === "user" ? "chat-bubble user" : "chat-bubble assistant"}>
+              <div className="prose">{item.text}</div>
+            </div>
           );
         }
+        const run = runs.get(block.runId);
+        const user = block.items.filter((x) => x.kind === "user");
+        const answers = block.items.filter((x) => x.kind === "assistant");
         return (
-          <div key={i} className={item.kind === "user" ? "chat-bubble user" : "chat-bubble assistant"}>
-            <div className="prose">{item.text}</div>
-          </div>
+          <Fragment key={block.runId}>
+            {user.map((u, j) => (
+              <div key={`u${j}`} className="chat-bubble user">
+                <div className="prose">{u.kind === "user" ? u.text : null}</div>
+              </div>
+            ))}
+            {run ? <RunCard run={run} steps={run.steps} report={run.report} /> : null}
+            {answers.map((a, j) => (
+              <div key={`a${j}`} className="chat-bubble assistant">
+                <div className="prose">{a.kind === "assistant" ? a.text : null}</div>
+              </div>
+            ))}
+            {(actionsByRun.get(block.runId) ?? []).map((a) => (
+              <ActionCard key={a.id} action={a} onChanged={() => void refresh()} />
+            ))}
+          </Fragment>
         );
       })}
-      {streaming ? (
+      {live ? (
         <>
-          {streaming.tools.map((t, i) => (
-            // A tool is running until the stream moves on: more text, or the next tool.
-            <ToolStep key={i} name={t} running={i === streaming.tools.length - 1 && !streaming.text} />
-          ))}
+          {live.run ? (
+            <RunCard run={live.run} steps={live.steps} report={live.report} live={!live.report} />
+          ) : null}
           <div className="chat-bubble assistant">
-            {streaming.text ? (
-              <div className="prose">{streaming.text}</div>
+            {live.text ? (
+              <div className="prose">{live.text}</div>
             ) : (
-              // Only while the reply is genuinely on its way (no text yet).
+              // Only while a reply is genuinely on its way (no text yet).
               <LogoMark size={18} state="working" className="assistant-working" />
             )}
           </div>
@@ -296,11 +515,11 @@ function Transcript({ id }: { id: string }) {
       ) : null}
       {/* One short announcement per turn instead of re-reading the growing text. */}
       <span className="sr-only" role="status">
-        {streaming ? "The assistant is responding." : ""}
+        {live ? "The assistant is working on your request." : ""}
       </span>
       {stopped ? (
         <p className="faint" style={{ margin: 0, fontSize: 12.5 }}>
-          Stopped. Nothing was changed.
+          Stopped. Steps that had not run were cancelled; nothing else was changed.
         </p>
       ) : null}
       {error ? <div className="form-error">{error}</div> : null}
@@ -320,9 +539,13 @@ function Transcript({ id }: { id: string }) {
           className="textarea"
           rows={2}
           maxLength={4000}
-          placeholder="Ask about tasks, projects, people, approvals…"
+          placeholder={
+            ruleOnly
+              ? "Try “What should I prioritize today?” or “help”"
+              : "Ask about tasks, projects, people, approvals…"
+          }
           value={draft}
-          disabled={Boolean(streaming)}
+          disabled={Boolean(live)}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
@@ -331,7 +554,7 @@ function Transcript({ id }: { id: string }) {
             }
           }}
         />
-        {streaming ? (
+        {live ? (
           <Button
             type="button"
             icon
@@ -350,14 +573,214 @@ function Transcript({ id }: { id: string }) {
           </Button>
         )}
       </form>
-      {convo.data.usage && convo.data.usage.requests > 0 ? (
+      {data.usage && data.usage.requests > 0 ? (
         <p className="faint" style={{ fontSize: 12, margin: 0 }}>
-          {convo.data.usage.requests} model requests ·{" "}
-          {convo.data.usage.inputTokens + convo.data.usage.outputTokens} tokens (
-          {convo.data.usage.cacheReadTokens} from cache)
+          {data.usage.requests} model requests · {data.usage.inputTokens + data.usage.outputTokens} tokens (
+          {data.usage.cacheReadTokens} from cache)
         </p>
       ) : null}
     </div>
+  );
+}
+
+// ─── Runtime status and memory ───────────────────────────────────────────────
+
+function RuntimeBanner({ status }: { status: Status }) {
+  const r = status.runtime;
+  return (
+    <div className="panel panel-body runtime-banner">
+      {r ? (
+        <p style={{ margin: 0 }}>
+          <Brain size={15} aria-hidden /> <strong>Model:</strong> {r.model} ·{" "}
+          {r.hosting === "self-hosted" ? "self-hosted runtime" : "hosted API (third-party)"} ·{" "}
+          {r.reachable ? (
+            <span className="good">reachable</span>
+          ) : (
+            <span className="critical">
+              not reachable{r.detail ? ` (${r.detail})` : ""}: supported commands fall back to FLOWOS rules
+            </span>
+          )}
+          {!status.includedInPlan ? " · not included in your plan, so FLOWOS rules answer instead" : null}
+        </p>
+      ) : (
+        <p style={{ margin: 0 }}>
+          <ShieldCheck size={15} aria-hidden /> <strong>FLOWOS rules mode.</strong> No language model is
+          configured. Supported commands are planned and answered from your live records; other questions need
+          an inference model on the server.
+          {status.configError ? (
+            <span className="critical"> Configuration problem: {status.configError}</span>
+          ) : null}
+        </p>
+      )}
+      <details>
+        <summary>What works without a model, and what the assistant never does</summary>
+        <div className="grid two" style={{ marginTop: 8 }}>
+          <ul className="plain">
+            {status.supportedCommands.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+          <ul className="plain">
+            {status.neverAutonomous.map((c) => (
+              <li key={c}>
+                <Ban size={12} aria-hidden /> {c}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function MemoryPanel() {
+  const toast = useToast();
+  const utils = trpc.useUtils();
+  const memories = trpc.ai.memories.useQuery();
+  const [draft, setDraft] = useState("");
+  const [orgDraft, setOrgDraft] = useState("");
+  const [clearing, setClearing] = useState(false);
+  const invalidate = () => utils.ai.memories.invalidate();
+  const add = trpc.ai.addMemory.useMutation({
+    onSuccess: async (_r, vars) => {
+      if (vars.scope === "PREFERENCE") setDraft("");
+      else setOrgDraft("");
+      await invalidate();
+    },
+    onError: toast.error,
+  });
+  const remove = trpc.ai.deleteMemory.useMutation({ onSuccess: invalidate, onError: toast.error });
+  const clear = trpc.ai.clearMyMemory.useMutation({
+    onSuccess: async (r) => {
+      setClearing(false);
+      toast.success(`Removed ${r.removed} personal ${r.removed === 1 ? "entry" : "entries"}.`);
+      await invalidate();
+    },
+    onError: toast.error,
+  });
+  const data = memories.data;
+  const group = (scope: string) => data?.items.filter((m) => m.scope === scope) ?? [];
+  const section = (
+    title: string,
+    scope: string,
+    deletable: (m: { mine: boolean | null }) => boolean,
+    hint: string,
+  ) => (
+    <div className="memory-section">
+      <p className="eyebrow">{title}</p>
+      {group(scope).length === 0 ? <p className="faint memory-empty">{hint}</p> : null}
+      <ul className="plain">
+        {group(scope).map((m) => (
+          <li key={m.id} className="memory-item">
+            <span className="grow">{m.content}</span>
+            {deletable(m) ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                icon
+                aria-label={`Delete: ${m.content}`}
+                onClick={() => remove.mutate({ id: m.id })}
+              >
+                <Trash2 aria-hidden />
+              </Button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+  return (
+    <Panel title="Memory">
+      {memories.error ? <ErrorState error={memories.error} /> : null}
+      {data ? (
+        <div className="stack" style={{ gap: 12 }}>
+          {section("Your preferences", "PREFERENCE", () => true, "Say “remember …” or add one below.")}
+          {section(
+            "Organization knowledge",
+            "ORG_KNOWLEDGE",
+            () => data.canManageOrgKnowledge,
+            "Written by people who manage the organization.",
+          )}
+          {section(
+            "Verified outcomes",
+            "OUTCOME",
+            () => true,
+            `Changes the assistant made and verified; kept ${data.retention.outcomeDays} days.`,
+          )}
+          <form
+            className="row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (draft.trim()) add.mutate({ scope: "PREFERENCE", content: draft });
+            }}
+          >
+            <label className="sr-only" htmlFor="memory-pref">
+              New preference
+            </label>
+            <input
+              id="memory-pref"
+              className="input grow"
+              maxLength={500}
+              placeholder="Add a preference"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+            <Button
+              type="submit"
+              size="sm"
+              loading={add.isPending && add.variables?.scope === "PREFERENCE"}
+              disabled={!draft.trim()}
+            >
+              Save
+            </Button>
+          </form>
+          {data.canManageOrgKnowledge ? (
+            <form
+              className="row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (orgDraft.trim()) add.mutate({ scope: "ORG_KNOWLEDGE", content: orgDraft });
+              }}
+            >
+              <label className="sr-only" htmlFor="memory-org">
+                New organization knowledge
+              </label>
+              <input
+                id="memory-org"
+                className="input grow"
+                maxLength={500}
+                placeholder="Add organization knowledge"
+                value={orgDraft}
+                onChange={(e) => setOrgDraft(e.target.value)}
+              />
+              <Button
+                type="submit"
+                size="sm"
+                loading={add.isPending && add.variables?.scope === "ORG_KNOWLEDGE"}
+                disabled={!orgDraft.trim()}
+              >
+                Save
+              </Button>
+            </form>
+          ) : null}
+          <Button size="sm" variant="ghost" onClick={() => setClearing(true)}>
+            Clear my memory
+          </Button>
+        </div>
+      ) : (
+        <SkeletonRows rows={2} />
+      )}
+      <ConfirmDialog
+        open={clearing}
+        onClose={() => setClearing(false)}
+        title="Clear your assistant memory?"
+        body="Your saved preferences and verified outcomes in this organization are deleted. Organization knowledge and your conversations are kept."
+        confirmLabel="Clear memory"
+        danger
+        loading={clear.isPending}
+        onConfirm={() => clear.mutate()}
+      />
+    </Panel>
   );
 }
 
@@ -367,8 +790,7 @@ export function AssistantPage() {
   const toast = useToast();
   const utils = trpc.useUtils();
   const status = trpc.ai.status.useQuery();
-  const usable = status.data?.configured === true && status.data.includedInPlan;
-  const conversations = trpc.ai.conversations.useQuery(undefined, { enabled: usable });
+  const conversations = trpc.ai.conversations.useQuery(undefined, { enabled: Boolean(status.data) });
   const create = trpc.ai.createConversation.useMutation({
     onSuccess: async (c) => {
       await utils.ai.conversations.invalidate();
@@ -392,9 +814,9 @@ export function AssistantPage() {
       <PageHeader
         eyebrow="Assist"
         title="Assistant"
-        lede="Ask questions about live operational data. It sees only what you can see, and every change waits for your confirmation."
+        lede="FLOWOS plans each request, runs it against your live records with your permissions, and shows every step. Every change waits for your confirmation."
         actions={
-          usable ? (
+          status.data ? (
             <Button variant="primary" loading={create.isPending} onClick={() => create.mutate({})}>
               <MessageSquarePlus aria-hidden /> New conversation
             </Button>
@@ -403,65 +825,53 @@ export function AssistantPage() {
       />
       {status.isLoading ? <SkeletonRows rows={3} /> : null}
       {status.error ? <ErrorState error={status.error} onRetry={() => void status.refetch()} /> : null}
-      {status.data && !status.data.configured ? (
-        <div className="panel">
-          <EmptyState icon={<Sparkles size={18} />} title="The AI assistant is not configured on this server">
-            An administrator needs to set <span className="mono">ANTHROPIC_API_KEY</span> in the server
-            environment. Everything else in FLOWOS works without it; the command center briefing is rule-based
-            and does not use AI.
-          </EmptyState>
-        </div>
-      ) : null}
-      {status.data?.configured && !status.data.includedInPlan ? (
-        <div className="panel">
-          <EmptyState icon={<Sparkles size={18} />} title="The assistant is not included in your plan">
-            An owner can change the plan in <Link to="/settings/billing">Settings → Billing</Link>.
-          </EmptyState>
-        </div>
-      ) : null}
-      {usable ? (
+      {status.data ? <RuntimeBanner status={status.data} /> : null}
+      {status.data ? (
         <div className="grid assistant-layout">
-          <Panel title="Conversations" flush>
-            {conversations.data && conversations.data.length === 0 ? (
-              <EmptyState compact title="No conversations yet" />
-            ) : null}
-            <ul className="list">
-              {(conversations.data ?? []).map((c) => (
-                <li key={c.id}>
-                  <div
-                    className="list-item"
-                    style={{ background: c.id === id ? "var(--paper-sunk)" : undefined }}
-                  >
-                    <a
-                      href={`/assistant/${c.id}`}
-                      className="grow truncate"
-                      style={{ textDecoration: "none" }}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        navigate(`/assistant/${c.id}`);
-                      }}
+          <div className="stack" style={{ gap: 16 }}>
+            <Panel title="Conversations" flush>
+              {conversations.data && conversations.data.length === 0 ? (
+                <EmptyState compact title="No conversations yet" />
+              ) : null}
+              <ul className="list">
+                {(conversations.data ?? []).map((c) => (
+                  <li key={c.id}>
+                    <div
+                      className="list-item"
+                      style={{ background: c.id === id ? "var(--paper-sunk)" : undefined }}
                     >
-                      {c.title}
-                      <div className="faint" style={{ fontSize: 12 }}>
-                        {timeAgo(c.updatedAt)}
-                      </div>
-                    </a>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      icon
-                      aria-label={`Delete ${c.title}`}
-                      onClick={() => setDeleting({ id: c.id, title: c.title })}
-                    >
-                      <Trash2 aria-hidden />
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </Panel>
+                      <a
+                        href={`/assistant/${c.id}`}
+                        className="grow truncate"
+                        style={{ textDecoration: "none" }}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          navigate(`/assistant/${c.id}`);
+                        }}
+                      >
+                        {c.title}
+                        <div className="faint" style={{ fontSize: 12 }}>
+                          {timeAgo(c.updatedAt)}
+                        </div>
+                      </a>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon
+                        aria-label={`Delete ${c.title}`}
+                        onClick={() => setDeleting({ id: c.id, title: c.title })}
+                      >
+                        <Trash2 aria-hidden />
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+            <MemoryPanel />
+          </div>
           {id ? (
-            <Transcript key={id} id={id} />
+            <Transcript key={id} id={id} status={status.data} />
           ) : (
             <div className="panel">
               <EmptyState
@@ -473,7 +883,7 @@ export function AssistantPage() {
                   </Button>
                 }
               >
-                Try “What needs my attention today?”
+                Try “What should I prioritize today?”
               </EmptyState>
             </div>
           )}
@@ -483,7 +893,7 @@ export function AssistantPage() {
         open={deleting !== null}
         onClose={() => setDeleting(null)}
         title="Delete this conversation?"
-        body={`“${deleting?.title ?? ""}” and its messages are deleted. This cannot be undone; tasks it already created or updated are kept.`}
+        body={`“${deleting?.title ?? ""}”, its messages and its run history are deleted. This cannot be undone; tasks it already created or updated are kept.`}
         confirmLabel="Delete conversation"
         danger
         loading={remove.isPending}
