@@ -4,7 +4,8 @@ import { SESSION_COOKIE, validateSession } from "../../auth/session";
 import { getDb } from "../../db/client";
 import { AppError } from "../../lib/errors";
 import { loadActor } from "../../lib/membership";
-import { runTurn, type TurnEvent } from "./assistant";
+import { runTurn } from "./engine";
+import type { TurnEvent } from "./events";
 
 const body = z.object({ text: z.string().trim().min(1).max(4000) });
 

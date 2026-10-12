@@ -19,7 +19,7 @@ does it matter, and what should happen next?_
 - **Documents** — private storage, restricted visibility, audited downloads, expiry reminders.
 - **Insights** — week-over-week throughput, overdue history, approval turnaround and workflow reliability, each with its definition.
 - **Search** — Cmd/Ctrl+K across everything you are allowed to see.
-- **Assistant** — ask about live data; it uses only tools your role allows and every change waits for your explicit confirmation (requires `ANTHROPIC_API_KEY`; not yet verified against the live API).
+- **Assistant (FLOWOS intelligence engine)** — plans each request as explicit steps over typed tools, runs them with your permissions, verifies changes and shows every step. Works without any AI API (rules mode for supported commands); an optional self-hosted model (llama.cpp, Ollama, vLLM) handles free-form requests. Every change waits for your confirmation. See [docs/INTELLIGENCE.md](docs/INTELLIGENCE.md).
 - **Security** — tenant isolation enforced in services _and_ the database, role-based permissions, append-only audit log.
 
 Also built: billing plans with Stripe (verified with a fake Stripe in tests, not against Stripe itself) and Slack/Teams incoming webhooks (delivery to a real channel not verified yet). "Forgot password?" sends a reset link when SMTP is configured (tested with a local SMTP server only). Not built: notification emails, OAuth integrations. See the status doc.

@@ -2267,3 +2267,142 @@ ul.plain {
   display: block;
   margin: 3px 0;
 }
+
+/* ─── Assistant runs: objective, plan and step status ─────────────────────── */
+.run-card {
+  align-self: stretch;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  padding: 10px 12px;
+  font-size: 13px;
+  animation: rise-in var(--dur-base) var(--ease);
+}
+.run-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.run-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+}
+.run-objective {
+  font-weight: 500;
+  flex: 1 1 200px;
+}
+.run-steps {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.run-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--ink-2);
+  animation: fade-in var(--dur-base) var(--ease);
+}
+.run-step-icon {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  color: var(--ink-3);
+}
+.run-step.good .run-step-icon {
+  color: var(--good);
+}
+.run-step.critical .run-step-icon,
+.run-step.critical .run-step-detail {
+  color: var(--critical);
+}
+.run-step.attention .run-step-icon {
+  color: var(--attention);
+}
+.run-step-detail {
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+.run-step-tool {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.run-tag {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--info);
+}
+.run-verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  color: var(--good);
+}
+.run-notes {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.run-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+.runtime-banner {
+  margin-bottom: 16px;
+  font-size: 13.5px;
+}
+.runtime-banner svg {
+  vertical-align: -2px;
+}
+.runtime-banner .good {
+  color: var(--good);
+}
+.runtime-banner .critical {
+  color: var(--critical);
+}
+.runtime-banner details {
+  margin-top: 8px;
+  color: var(--ink-2);
+}
+.runtime-banner summary {
+  cursor: pointer;
+  color: var(--ink-2);
+}
+.memory-section .eyebrow {
+  margin: 0 0 4px;
+}
+.memory-empty {
+  margin: 0;
+  font-size: 12.5px;
+}
+.memory-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink);
+}
+@media (max-width: 520px) {
+  .run-step-tool {
+    display: none;
+  }
+}

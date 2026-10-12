@@ -5,56 +5,59 @@ import { aiActions, aiMessages, aiUsage, tasks } from "../src/db/schema";
 import { addDaysISO, todayISO } from "../src/lib/dates";
 import { loadActor } from "../src/lib/membership";
 import { aiLimiter, confirmAction, runTurn, type TurnEvent } from "../src/modules/ai/assistant";
-import {
-  AnthropicProvider,
-  type AiMessage,
-  type AiProvider,
-  type AiTurnRequest,
-} from "../src/modules/ai/provider";
+import { selectRuntime, type ModelRequest, type ModelRuntime } from "../src/modules/ai/runtime";
 import { addMember, callerFor, createOrg, db, type TestUser } from "../test/helpers";
 
 /**
- * Live verification against the real Anthropic API (`npm run test:live`).
- * Needs ANTHROPIC_API_KEY in the environment; it is read by the provider only
- * and never logged. Costs a handful of model requests per run.
+ * Live verification against a real inference runtime (`npm run test:live`): a self-hosted
+ * OpenAI-compatible server (FLOWOS_MODEL_URL + FLOWOS_MODEL_NAME) or, if explicitly configured,
+ * the hosted Anthropic API (ANTHROPIC_API_KEY, paid). Credentials are read by the runtime only
+ * and never logged.
  */
 
-/** Passes requests through to the real provider and records which tools were offered. */
-class Recording implements AiProvider {
-  readonly model: string;
+/** Passes requests through to the real runtime and records which tools were offered. */
+class Recording implements ModelRuntime {
   offered: string[][] = [];
-  constructor(private readonly inner: AiProvider) {
-    this.model = inner.model;
+  constructor(private readonly inner: ModelRuntime) {}
+  get info() {
+    return this.inner.info;
   }
-  run(req: AiTurnRequest, onText: (d: string) => void, signal?: AbortSignal): Promise<AiMessage> {
+  health() {
+    return this.inner.health();
+  }
+  run(req: ModelRequest, onText: (d: string) => void, signal?: AbortSignal) {
     this.offered.push(req.tools.map((t) => t.name));
     return this.inner.run(req, onText, signal);
   }
 }
 
-let live: AiProvider;
+let live: ModelRuntime;
 
 beforeAll(() => {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) {
+  const { runtime, configError } = selectRuntime();
+  if (!runtime) {
     throw new Error(
-      "ANTHROPIC_API_KEY is not set. Configure it as an environment secret (see docs/DEPLOYMENT.md) and re-run `npm run test:live`.",
+      configError ??
+        "No model runtime is configured. Set FLOWOS_MODEL_URL and FLOWOS_MODEL_NAME (self-hosted) and re-run `npm run test:live`.",
     );
   }
-  live = new AnthropicProvider(key);
+  live = runtime;
+  console.log(`[live] runtime: ${runtime.info.provider} ${runtime.info.model} (${runtime.info.hosting})`);
 });
 beforeEach(() => aiLimiter.reset());
+// These tests are about the live model, so it plans every request (no rules-first shortcut).
+process.env.FLOWOS_ASSISTANT_ROUTING = "model-first";
 
 async function actorFor(user: TestUser, orgId: string) {
   return (await loadActor(db(), user.id, orgId, null)).actor!;
 }
 
 async function turn(user: TestUser, orgId: string, conversationId: string, message: string) {
-  const provider = new Recording(live);
+  const runtime = new Recording(live);
   const events: TurnEvent[] = [];
-  await runTurn(db(), await actorFor(user, orgId), conversationId, message, (e) => events.push(e), provider);
+  await runTurn(db(), await actorFor(user, orgId), conversationId, message, (e) => events.push(e), runtime);
   const text = events.map((e) => (e.type === "text" ? e.delta : "")).join("");
-  return { events, text, offered: provider.offered };
+  return { events, text, offered: runtime.offered };
 }
 
 /** Every tool_result the server sent the model in this conversation, as one string. */
@@ -93,8 +96,8 @@ describe("assistant against the live model", () => {
     const usage = await db().select().from(aiUsage).where(eq(aiUsage.conversationId, c.id));
     expect(usage.length).toBeGreaterThan(0);
     expect(usage.every((u) => u.error === null)).toBe(true);
-    // The model that actually served each request, as reported by the API.
-    expect(usage.every((u) => /^claude-/.test(u.model))).toBe(true);
+    // The model that actually served each request, as reported by the runtime.
+    expect(usage.every((u) => u.model.length > 0)).toBe(true);
     console.log(`[live] served by: ${[...new Set(usage.map((u) => u.model))].join(", ")}`);
   }, 240_000);
 

@@ -330,9 +330,10 @@ async function step(name, fn) {
     if ((await a.content()).includes("e2eNotARealHook")) throw new Error("webhook URL leaked to the page");
   });
 
-  await step("assistant honestly reports it is not configured (no API key)", async () => {
+  await step("assistant honestly reports that no model is configured (rules mode)", async () => {
     await a.goto(`${BASE}/assistant`);
-    await a.getByText("The AI assistant is not configured on this server").waitFor();
+    await a.getByText("FLOWOS rules mode.").waitFor();
+    await a.getByText("No language model is configured.", { exact: false }).first().waitFor();
   });
 
   await step("audit log shows the trail", async () => {
@@ -478,6 +479,44 @@ async function step(name, fn) {
     await dialog.waitFor({ state: "hidden" });
     await ctx.close();
   });
+
+  await step(
+    "assistant without a model: plans, answers from records, confirms and verifies a change",
+    async () => {
+      await a.goto(`${BASE}/assistant`);
+      await a.getByText("FLOWOS rules mode.").waitFor();
+      await a.getByRole("button", { name: "New conversation" }).first().click();
+      await a.getByRole("button", { name: "What should I prioritize today?" }).click();
+      const first = a.locator(".run-card").first();
+      await first.getByText("Completed").waitFor();
+      await first.getByText("analyze_priorities").waitFor();
+      await a.getByText(/^Your priorities for \d{4}-\d{2}-\d{2}, highest first:/).waitFor();
+
+      const msg = a.getByLabel("Message");
+      await msg.fill("Create task Assistant smoke check due tomorrow high priority");
+      await msg.press("Enter");
+      await a.getByRole("button", { name: "Confirm" }).click();
+      await a.getByText("Applied and verified").waitFor();
+      await a.locator(".run-card").nth(1).getByText("verified").waitFor();
+      // The verified outcome is remembered.
+      await a.locator(".memory-item", { hasText: "Assistant smoke check" }).waitFor();
+
+      await msg.fill("Remember that I like short answers");
+      await msg.press("Enter");
+      const pref = a.locator(".memory-item", { hasText: "I like short answers" });
+      await pref.waitFor();
+      await pref.getByRole("button", { name: "Delete: I like short answers" }).click();
+      await pref.waitFor({ state: "detached" });
+
+      await msg.fill("Compose a sonnet about spreadsheets");
+      await msg.press("Enter");
+      await a
+        .getByText(/^I can't interpret that request without a language model\. I won't guess\./)
+        .waitFor();
+      await a.locator(".run-card").last().getByText("Not understood").waitFor();
+      await a.screenshot({ path: `${SHOTS}/27-assistant-rules.png`, fullPage: true });
+    },
+  );
 
   await step(
     "brand: intro plays once, never blocks sign-in, skips, pauses, short for returning visitors",
