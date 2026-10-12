@@ -89,5 +89,7 @@ const scripted: ModelRuntime = {
 };
 
 setModelRuntime(scripted);
+// This harness exercises model mode, so the model plans every request.
+process.env.FLOWOS_ASSISTANT_ROUTING = "model-first";
 startWorker(getDb());
 createApp().listen(3200, () => console.log("AI test harness on :3200"));

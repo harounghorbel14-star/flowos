@@ -6,7 +6,7 @@ import { audit } from "../../lib/audit";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../../lib/errors";
 import { logSafeError } from "../../lib/logging";
 import { getEntitlements } from "../billing/entitlements";
-import { ownConversation } from "./engine";
+import { ownConversation, routing } from "./engine";
 import { hashInput } from "./executor";
 import { SUPPORTED_COMMANDS } from "./intents";
 import { recordOutcome } from "./memory";
@@ -296,6 +296,7 @@ export async function aiStatus(db?: Database, actor?: Actor) {
         }
       : null,
     configError: selection.configError,
+    routing: routing(),
     supportedCommands: SUPPORTED_COMMANDS,
     neverAutonomous: NEVER_AUTONOMOUS,
     tools: actor ? toolsFor(actor).map((t) => ({ name: t.name, risk: t.risk })) : [],

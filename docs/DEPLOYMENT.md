@@ -26,7 +26,7 @@ Open http://localhost:5173, create an account, then an organization.
 npm run check        # prettier --check, eslint, tsc, vitest, production build
 npm test             # integration tests only
 npm run test:e2e     # browser smoke test against a running app (see below)
-npm run test:live    # assistant against the real Anthropic API (needs ANTHROPIC_API_KEY)
+npm run test:live    # assistant against a real model runtime (FLOWOS_MODEL_URL/NAME, or ANTHROPIC_API_KEY)
 ```
 
 Integration tests need a disposable database whose name contains `test`
@@ -62,7 +62,11 @@ The harness is test-only code in `e2e/`; it is not part of the build.
 | `STORAGE_DIR`                                |                | `./storage`             | Private document storage directory (must not be web-served; back it up)                                                                                                                                                                     |
 | `FLOWOS_MIGRATE_ON_START`                    |                | `false`                 | Apply pending migrations at boot, before the API and worker start, under a PostgreSQL advisory lock (concurrent starts apply each migration once). For hosts without a release step, e.g. Render Free                                       |
 | `FLOWOS_WORKER`                              |                | `true`                  | Run the workflow/expiry worker in this process                                                                                                                                                                                              |
-| `ANTHROPIC_API_KEY`                          |                | —                       | Enables the AI assistant (server-side only). Unset: assistant shows "not configured"                                                                                                                                                        |
+| `FLOWOS_MODEL_URL`, `FLOWOS_MODEL_NAME`      |                | —                       | Optional self-hosted, OpenAI-compatible model runtime for the assistant (e.g. `http://llm:8080/v1`). Unset: rules mode (see "Model runtime")                                                                                                |
+| `FLOWOS_MODEL_PROVIDER`                      |                | auto                    | `none`, `openai-compatible` or `anthropic`. Explicit; never falls back to another provider                                                                                                                                                  |
+| `FLOWOS_ASSISTANT_ROUTING`                   |                | `rules-first`           | `rules-first`: supported commands are answered by FLOWOS rules even with a model. `model-first`: the model plans every request                                                                                                              |
+| `FLOWOS_MODEL_API_KEY`                       |                | —                       | Only for a gateway you run in front of the model                                                                                                                                                                                            |
+| `ANTHROPIC_API_KEY`                          |                | —                       | Optional hosted (paid) runtime, used only if selected (or if it is the only model variable set)                                                                                                                                             |
 | `INTEGRATIONS_ENCRYPTION_KEY`                |                | —                       | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts integration secrets at rest. Unset: integrations cannot be connected. Losing it makes stored connections unreadable (reconnect them)                                          |
 | `SMTP_URL`, `MAIL_FROM`                      |                | —                       | Outgoing email for password reset links (`smtp://` or `smtps://` URL with credentials — secret; sender address). Unset: "Forgot password?" says email is unavailable and an operator creates links with `reset-link` (see "Password reset") |
 | `STRIPE_SECRET_KEY`                          | for billing    | —                       | Enables billing together with the next three. All unset: self-hosted mode, no plan limits                                                                                                                                                   |
@@ -95,19 +99,34 @@ The 25-step browser E2E passes, the onboarding workflow run completes in the
 background worker, and the server log contains only its startup line.
 `server/test/boot.test.ts` checks the same boot path in `npm test`.
 
-## Configuring the Anthropic API key
+## Model runtime (optional)
 
-The assistant reads `ANTHROPIC_API_KEY` from the server's environment only.
-Never put the key in `.env.example`, in client code, or in any committed file.
-
-- **Local machine:** add `ANTHROPIC_API_KEY=...` to `.env` (git-ignored).
-- **Production:** set it in your host's secret manager as an environment variable for the server process.
-- **Claude Code cloud environment (to let the agent run live verification):** open the environment menu in the session's title bar, choose Edit, and add `ANTHROPIC_API_KEY` as an environment variable or secret. A new session picks it up. Do not paste the key into the chat.
-
-Then verify against the live API (a handful of model requests):
+The assistant needs no model: in rules mode FLOWOS plans and answers the
+supported commands from live records (see docs/INTELLIGENCE.md). A model adds
+free-form requests. Run it next to FLOWOS, never inside the web process:
 
 ```bash
-npm run test:live    # fails immediately with instructions if ANTHROPIC_API_KEY is unset
+# llama.cpp (CPU or GPU). --jinja enables tool calls for models whose template supports them.
+llama-server -m qwen2.5-7b-instruct-q4_k_m.gguf --jinja -c 16384 --host 0.0.0.0 --port 8080
+# or Ollama
+ollama serve && ollama pull qwen2.5:7b-instruct      # OpenAI-compatible API on :11434/v1
+```
+
+```
+FLOWOS_MODEL_URL=http://llm-host:8080/v1      # Ollama: http://llm-host:11434/v1
+FLOWOS_MODEL_NAME=qwen2.5-7b-instruct
+```
+
+Choose a model whose chat template supports tool calls (Qwen2.5-Instruct,
+Llama 3.1/3.2 Instruct, Mistral Nemo). Small models without tool support
+answer without consulting records; FLOWOS labels such answers "Unverified".
+Sizing guidance is in docs/INTELLIGENCE.md. The status line on the Assistant
+page shows whether the runtime is reachable.
+
+Verify against the configured runtime:
+
+```bash
+npm run test:live    # fails immediately with instructions if no runtime is configured
 ```
 
 `server/test-live/assistant.live.test.ts` checks four things against the
@@ -115,6 +134,12 @@ real model: an answer grounded in a permitted read tool, `create_task`
 prepared but not executed until the confirmation call (a chat "yes" does not
 count), a viewer never offered write tools, and no data from another
 organization in tool results or answers.
+
+### Hosted alternative (Anthropic, paid)
+
+Only if you choose it: set `ANTHROPIC_API_KEY` (and `FLOWOS_MODEL_PROVIDER=anthropic`
+if a model URL is also set) in the server's secret store, never in a committed
+file. FLOWOS never falls back to it when a self-hosted runtime is down.
 
 ## Operations
 

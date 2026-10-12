@@ -467,13 +467,16 @@ describe("recovery, limits and model availability", () => {
     const { owner, org, as } = await createOrg();
     const down: ModelRuntime = {
       info: { provider: "openai-compatible", model: "local-model", hosting: "self-hosted" },
-      health: async () => ({ ok: false, detail: "TypeError" }),
+      health: async () => ({ ok: false, detail: "connection failed" }),
       run: async () => {
         throw new ModelUnavailableError("The model runtime could not be reached.");
       },
     };
     const c = await as(owner).ai.createConversation({});
-    const supported = await ask(owner, org.id, c.id, "Which approvals are waiting for me?", down);
+    process.env.FLOWOS_ASSISTANT_ROUTING = "model-first";
+    const supported = await ask(owner, org.id, c.id, "Which approvals are waiting for me?", down).finally(
+      () => delete process.env.FLOWOS_ASSISTANT_ROUTING,
+    );
     expect(supported.events).toContainEqual({
       type: "error",
       kind: "model_unavailable",
@@ -499,6 +502,35 @@ describe("recovery, limits and model availability", () => {
       ["rules", "COMPLETED"],
     ]);
     expect(runs[0]!.error).toBe("Model unavailable: The model runtime could not be reached.");
+  });
+});
+
+describe("routing", () => {
+  it("rules-first (default): supported commands never reach the model, other requests do", async () => {
+    const { owner, org, as } = await createOrg();
+    const c = await as(owner).ai.createConversation({});
+    const runtime = new ScriptedRuntime([text("A free-form answer.")]);
+    const known = await ask(owner, org.id, c.id, "Which approvals are waiting for me?", runtime);
+    expect(runtime.requests).toHaveLength(0);
+    expect(known.report).toMatchObject({ mode: "rules", status: "COMPLETED" });
+    const other = await ask(owner, org.id, c.id, "Summarize our week in one sentence", runtime);
+    expect(runtime.requests).toHaveLength(1);
+    expect(other.report).toMatchObject({ mode: "model", grounded: false });
+    expect((await as(owner).ai.status()).routing).toBe("rules-first");
+  });
+
+  it("model-first: the model plans supported commands too", async () => {
+    const { owner, org, as } = await createOrg();
+    const c = await as(owner).ai.createConversation({});
+    const runtime = new ScriptedRuntime([callTool("list_my_approvals", {}), text("None waiting.")]);
+    process.env.FLOWOS_ASSISTANT_ROUTING = "model-first";
+    try {
+      const r = await ask(owner, org.id, c.id, "Which approvals are waiting for me?", runtime);
+      expect(r.report).toMatchObject({ mode: "model", grounded: true });
+      expect(runtime.requests).toHaveLength(2);
+    } finally {
+      delete process.env.FLOWOS_ASSISTANT_ROUTING;
+    }
   });
 });
 

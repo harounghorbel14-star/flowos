@@ -45,6 +45,8 @@ beforeAll(() => {
   console.log(`[live] runtime: ${runtime.info.provider} ${runtime.info.model} (${runtime.info.hosting})`);
 });
 beforeEach(() => aiLimiter.reset());
+// These tests are about the live model, so it plans every request (no rules-first shortcut).
+process.env.FLOWOS_ASSISTANT_ROUTING = "model-first";
 
 async function actorFor(user: TestUser, orgId: string) {
   return (await loadActor(db(), user.id, orgId, null)).actor!;

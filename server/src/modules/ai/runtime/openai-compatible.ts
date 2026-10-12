@@ -123,7 +123,10 @@ export class OpenAiCompatibleRuntime implements ModelRuntime {
       });
       return res.ok ? { ok: true } : { ok: false, detail: `HTTP ${res.status}` };
     } catch (err) {
-      return { ok: false, detail: err instanceof Error ? err.name : "unreachable" };
+      return {
+        ok: false,
+        detail: err instanceof Error && err.name === "TimeoutError" ? "timed out" : "connection failed",
+      };
     }
   }
 

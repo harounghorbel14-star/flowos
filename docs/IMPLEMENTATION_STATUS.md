@@ -139,7 +139,12 @@ states. No revenue or invented metrics.
 
 - Tests: `insight.test.ts` (6)
 
-### Phase H — AI operations assistant: IMPLEMENTED; live-model verification PENDING BILLING
+### Phase H — AI operations assistant: SUPERSEDED by the FLOWOS intelligence engine
+
+The section below describes the first, Anthropic-only version. The assistant now
+runs on the FLOWOS-owned engine (rules mode without any model, optional
+self-hosted runtime, explicit plans, policy, verification, memory): see
+[INTELLIGENCE.md](INTELLIGENCE.md) for its architecture and current test results.
 
 Everything except a live model call is implemented and tested. **No
 `ANTHROPIC_API_KEY` is configured as a secret in the build environment, so no

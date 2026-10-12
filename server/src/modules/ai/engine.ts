@@ -201,6 +201,17 @@ async function takeActionUpdates(db: Database, actor: Actor, conversationId: str
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
+/**
+ * FLOWOS_ASSISTANT_ROUTING: "rules-first" (default) sends supported commands to FLOWOS's own
+ * planner even when a model is configured: deterministic, free, grounded in records.
+ * "model-first" lets the model plan every request except memory commands.
+ */
+export function routing(source: NodeJS.ProcessEnv = process.env): "rules-first" | "model-first" {
+  return source.FLOWOS_ASSISTANT_ROUTING?.trim().toLowerCase() === "model-first"
+    ? "model-first"
+    : "rules-first";
+}
+
 export async function runTurn(
   db: Database,
   actor: Actor,
@@ -224,7 +235,12 @@ export async function runTurn(
     }
     const intent = routeIntent(userText);
     // Memory commands never pass through a model: what is saved is exactly what the user wrote.
-    const rulesOnly = intent?.kind === "remember" || intent?.kind === "help";
+    // With rules-first routing (the default), every command FLOWOS supports is answered by its own
+    // deterministic plan even when a model is configured; the model handles everything else.
+    const rulesOnly =
+      intent?.kind === "remember" ||
+      intent?.kind === "help" ||
+      (intent !== null && routing() === "rules-first");
     let modelBlocked: string | null = null;
     if (runtime && !rulesOnly) {
       try {

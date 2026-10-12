@@ -282,7 +282,14 @@ export async function runHousekeeping(db: Database) {
   const webhookEventsPurged = await purgeOldWebhookEvents(db);
   const resetLinksPurged = await purgeOldResetTokens(db);
   const aiMemoriesPurged = await purgeExpiredMemories(db);
-  return { expiryReminders, rateLimitsPurged, sessionsPurged, webhookEventsPurged, resetLinksPurged, aiMemoriesPurged };
+  return {
+    expiryReminders,
+    rateLimitsPurged,
+    sessionsPurged,
+    webhookEventsPurged,
+    resetLinksPurged,
+    aiMemoriesPurged,
+  };
 }
 
 /**

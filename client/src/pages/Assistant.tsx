@@ -198,7 +198,10 @@ function RunCard({
     status && !live
       ? notUnderstood
         ? { label: "Not understood", tone: undefined }
-        : RUN_STATUS[status]
+        : status === "COMPLETED" && report?.grounded === false
+          ? // The model answered without consulting any record: never presented as a success.
+            { label: "Unverified answer", tone: "attention" }
+          : RUN_STATUS[status]
       : null;
   return (
     <section className="run-card" aria-label={`Run: ${run.objective}`}>
@@ -601,6 +604,12 @@ function RuntimeBanner({ status }: { status: Status }) {
             </span>
           )}
           {!status.includedInPlan ? " · not included in your plan, so FLOWOS rules answer instead" : null}
+          <br />
+          <span className="faint">
+            {status.routing === "rules-first"
+              ? "Supported commands are planned and answered by FLOWOS rules; the model handles other requests."
+              : "The model plans every request; FLOWOS validates and executes each step."}
+          </span>
         </p>
       ) : (
         <p style={{ margin: 0 }}>

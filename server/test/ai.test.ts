@@ -53,7 +53,7 @@ describe("assistant in model mode", () => {
         return text("You have one overdue task: Renew insurance.")(req);
       },
     ]);
-    const events = await turn(await actorFor(owner, org.id), c.id, "What is overdue for me?", runtime);
+    const events = await turn(await actorFor(owner, org.id), c.id, "Anything I forgot about?", runtime);
 
     expect(events.map((e) => (e.type === "text" ? e.delta : "")).join("")).toContain("Renew insurance");
     expect(events).toContainEqual({ type: "tool", name: "list_tasks", outcome: "OK" });
@@ -79,7 +79,7 @@ describe("assistant in model mode", () => {
 
     const convo = await as(owner).ai.conversation({ id: c.id });
     expect(convo.items.map((i) => i.kind)).toEqual(["user", "assistant", "tool", "assistant"]);
-    expect(convo.title).toBe("What is overdue for me?");
+    expect(convo.title).toBe("Anything I forgot about?");
     expect(convo.runs).toHaveLength(1);
     expect(convo.runs[0]!.steps.map((s) => [s.tool, s.status, s.planned])).toEqual([
       ["list_tasks", "SUCCEEDED", false],
