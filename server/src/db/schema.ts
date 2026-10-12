@@ -594,6 +594,8 @@ export const aiMessages = pgTable(
     conversationId: uuid("conversation_id").notNull(),
     role: text("role").$type<"user" | "assistant">().notNull(),
     content: jsonb("content").$type<unknown[]>().notNull(),
+    /** The engine run this message belongs to (null for messages recorded before runs existed). */
+    runId: uuid("run_id"),
     createdAt: createdAt(),
   },
   (t) => [index("ai_messages_conversation_idx").on(t.conversationId, t.id)],
@@ -622,6 +624,17 @@ export const aiActions = pgTable(
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     /** Set once the outcome has been reported back to the model. */
     reportedAt: timestamp("reported_at", { withTimezone: true }),
+    /** The run and plan step that prepared it. */
+    runId: uuid("run_id"),
+    stepId: uuid("step_id"),
+    /**
+     * State of the target when the action was prepared (e.g. the task's status). Confirmation
+     * refuses to execute if the target has changed since, so an old confirmation never applies
+     * to a materially different situation.
+     */
+    precondition: jsonb("precondition").$type<Record<string, unknown>>(),
+    /** Whether the result was re-read and matched the intended change. */
+    verified: boolean("verified"),
     createdAt: createdAt(),
   },
   (t) => [
@@ -667,6 +680,114 @@ export const aiUsage = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("ai_usage_org_idx").on(t.orgId, t.createdAt)],
+);
+
+// ─── Intelligence engine ─────────────────────────────────────────────────────
+
+export const aiRunStatusEnum = pgEnum("ai_run_status", [
+  "RUNNING",
+  "COMPLETED",
+  "PARTIAL",
+  "AWAITING_CONFIRMATION",
+  "FAILED",
+  "CANCELLED",
+]);
+
+export const aiStepStatusEnum = pgEnum("ai_step_status", [
+  "PENDING",
+  "RUNNING",
+  "SUCCEEDED",
+  "FAILED",
+  "SKIPPED",
+  "AWAITING_CONFIRMATION",
+  "CANCELLED",
+]);
+
+export const aiMemoryScopeEnum = pgEnum("ai_memory_scope", ["PREFERENCE", "ORG_KNOWLEDGE", "OUTCOME"]);
+
+/** One user request handled by the engine: its objective, mode, outcome and cost. */
+export const aiRuns = pgTable(
+  "ai_runs",
+  {
+    id: id(),
+    orgId: uuid("org_id").notNull(),
+    conversationId: uuid("conversation_id").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** "rules": FLOWOS-owned deterministic planning; "model": a configured inference runtime planned. */
+    mode: text("mode").$type<"rules" | "model">().notNull(),
+    model: text("model"),
+    intent: text("intent"),
+    objective: text("objective").notNull(),
+    status: aiRunStatusEnum("status").notNull().default("RUNNING"),
+    /** Deterministic one-line record of what happened; used as memory of previous conversations. */
+    summary: text("summary"),
+    report: jsonb("report").$type<Record<string, unknown>>(),
+    error: text("error"),
+    modelRequests: integer("model_requests").notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    latencyMs: integer("latency_ms"),
+  },
+  (t) => [
+    uniqueIndex("ai_runs_org_id_key").on(t.orgId, t.id),
+    index("ai_runs_conversation_idx").on(t.orgId, t.conversationId, t.startedAt),
+    index("ai_runs_user_idx").on(t.orgId, t.userId, t.startedAt),
+  ],
+);
+
+/** One step of a run's plan, with what actually happened when it ran. */
+export const aiRunSteps = pgTable(
+  "ai_run_steps",
+  {
+    id: id(),
+    orgId: uuid("org_id").notNull(),
+    runId: uuid("run_id").notNull(),
+    position: integer("position").notNull(),
+    tool: text("tool").notNull(),
+    purpose: text("purpose").notNull(),
+    input: jsonb("input").$type<Record<string, unknown>>().notNull(),
+    status: aiStepStatusEnum("status").notNull().default("PENDING"),
+    /** False when the step was added while executing (re-planning), not in the original plan. */
+    planned: boolean("planned").notNull().default(true),
+    attempts: integer("attempts").notNull().default(0),
+    resultSummary: text("result_summary"),
+    result: jsonb("result").$type<unknown>(),
+    error: text("error"),
+    actionId: uuid("action_id"),
+    verified: boolean("verified"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    latencyMs: integer("latency_ms"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("ai_run_steps_position_key").on(t.runId, t.position)],
+);
+
+/**
+ * Scoped memory. PREFERENCE (one user) and ORG_KNOWLEDGE (whole organization) are written only
+ * by people; OUTCOME only by the engine after it verified a change. Model output is never stored
+ * here as fact.
+ */
+export const aiMemories = pgTable(
+  "ai_memories",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    /** Owner for PREFERENCE and OUTCOME; null for ORG_KNOWLEDGE. */
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+    scope: aiMemoryScopeEnum("scope").notNull(),
+    content: text("content").notNull(),
+    source: text("source").$type<"user" | "engine">().notNull(),
+    sourceRef: jsonb("source_ref").$type<Record<string, unknown>>(),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("ai_memories_scope_idx").on(t.orgId, t.scope, t.userId, t.createdAt)],
 );
 
 // ─── Rate limiting ───────────────────────────────────────────────────────────

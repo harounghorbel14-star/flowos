@@ -12,6 +12,7 @@ import { purgeExpiredSessions } from "../../auth/session";
 import { notifyExpiringDocuments } from "../documents/service";
 import { recordDailySnapshots } from "../insights/service";
 import { purgeOldWebhookEvents } from "../billing/service";
+import { purgeExpiredMemories } from "../ai/memory";
 import { notify } from "../notifications/service";
 import { describeError, executeAction, PermanentError } from "./actions";
 import { logSafeError } from "../../lib/logging";
@@ -280,7 +281,8 @@ export async function runHousekeeping(db: Database) {
   const sessionsPurged = await purgeExpiredSessions(db);
   const webhookEventsPurged = await purgeOldWebhookEvents(db);
   const resetLinksPurged = await purgeOldResetTokens(db);
-  return { expiryReminders, rateLimitsPurged, sessionsPurged, webhookEventsPurged, resetLinksPurged };
+  const aiMemoriesPurged = await purgeExpiredMemories(db);
+  return { expiryReminders, rateLimitsPurged, sessionsPurged, webhookEventsPurged, resetLinksPurged, aiMemoriesPurged };
 }
 
 /**

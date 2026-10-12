@@ -106,6 +106,20 @@
       "when": 1791740590809,
       "tag": "0014_password_resets",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1791827881321,
+      "tag": "0015_ai_engine",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1791827889189,
+      "tag": "0016_ai_engine_integrity",
+      "breakpoints": true
     }
   ]
 }

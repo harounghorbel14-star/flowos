@@ -1,88 +1,36 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { aiActions, aiConversations, aiMessages, aiUsage, tasks } from "../src/db/schema";
+import { aiActions, aiConversations, aiMessages, aiRuns, aiUsage, tasks } from "../src/db/schema";
 import { aiLimiter, fitHistory, runTurn, SYSTEM_PROMPT, type TurnEvent } from "../src/modules/ai/assistant";
-import {
-  setAiProvider,
-  type AiMessage,
-  type AiProvider,
-  type AiTurnRequest,
-} from "../src/modules/ai/provider";
+import { setModelRuntime, type ModelRuntime } from "../src/modules/ai/runtime";
 import type { Actor } from "../src/lib/actor";
-import { addMember, createOrg, db, type TestUser } from "./helpers";
+import { actorFor, callTool, lastToolResults, ScriptedRuntime, text } from "./ai-helpers";
+import { addMember, createOrg, db } from "./helpers";
 
-type Block = Record<string, unknown>;
-
-/** Deterministic stand-in for the model: replays scripted responses and records every request. */
-class ScriptedProvider implements AiProvider {
-  readonly model = "scripted-test-model";
-  requests: AiTurnRequest[] = [];
-  constructor(private readonly script: Array<(req: AiTurnRequest) => { content: Block[]; stop: string }>) {}
-  async run(request: AiTurnRequest, onText: (d: string) => void): Promise<AiMessage> {
-    this.requests.push(structuredClone(request));
-    const step = this.script.shift();
-    if (!step) throw new Error("script exhausted");
-    const { content, stop } = step(request);
-    for (const b of content) if (b.type === "text") onText(String(b.text));
-    return {
-      id: `msg_${randomUUID()}`,
-      type: "message",
-      role: "assistant",
-      model: this.model,
-      content,
-      stop_reason: stop,
-      stop_sequence: null,
-      usage: {
-        input_tokens: 100,
-        output_tokens: 20,
-        cache_read_input_tokens: 80,
-        cache_creation_input_tokens: 0,
-      },
-    } as unknown as AiMessage;
-  }
-}
-
-const text = (t: string) => () => ({ content: [{ type: "text", text: t }], stop: "end_turn" });
-const callTool =
-  (name: string, input: Record<string, unknown>, id = `toolu_${randomUUID()}`) =>
-  () => ({
-    content: [
-      { type: "text", text: "Let me check." },
-      { type: "tool_use", id, name, input },
-    ],
-    stop: "tool_use",
-  });
-/** The tool_result blocks the assistant sent back in the latest request. */
-const lastToolResults = (req: AiTurnRequest) => {
-  const last = req.messages.at(-1)!;
-  return (last.content as unknown as Block[]).filter((b) => b.type === "tool_result");
-};
-
-async function actorFor(user: TestUser, orgId: string): Promise<Actor> {
-  const { loadActor } = await import("../src/lib/membership");
-  return (await loadActor(db(), user.id, orgId, null)).actor!;
-}
-
-async function turn(actor: Actor, conversationId: string, message: string, provider: AiProvider) {
+async function turn(actor: Actor, conversationId: string, message: string, runtime: ModelRuntime | null) {
   const events: TurnEvent[] = [];
-  await runTurn(db(), actor, conversationId, message, (e) => events.push(e), provider);
+  await runTurn(db(), actor, conversationId, message, (e) => events.push(e), runtime);
   return events;
 }
 
 beforeEach(() => aiLimiter.reset());
-afterEach(() => setAiProvider(null));
+afterEach(() => setModelRuntime(null));
 
-describe("AI assistant", () => {
-  it("reports itself as not configured without a provider", async () => {
+describe("assistant in model mode", () => {
+  it("reports rules mode and the runtime honestly in its status", async () => {
     const { owner, as } = await createOrg();
-    setAiProvider(null);
-    expect(await as(owner).ai.status()).toEqual({ configured: false, model: null, includedInPlan: true });
-    const c = await as(owner).ai.createConversation({});
-    await expect(
-      runTurn(db(), await actorFor(owner, (await as(owner).orgs.current()).id), c.id, "hi", () => {}, null),
-    ).rejects.toMatchObject({
-      code: "BAD_REQUEST",
+    setModelRuntime(null);
+    const s = await as(owner).ai.status();
+    expect(s).toMatchObject({ configured: true, model: null, runtime: null, includedInPlan: true });
+    expect(s.supportedCommands.length).toBeGreaterThan(5);
+    setModelRuntime(new ScriptedRuntime([]));
+    expect((await as(owner).ai.status()).runtime).toEqual({
+      provider: "scripted",
+      model: "scripted-test-model",
+      hosting: "self-hosted",
+      reachable: true,
+      detail: null,
     });
   });
 
@@ -96,38 +44,46 @@ describe("AI assistant", () => {
     });
     await as(owner).tasks.create({ title: "Someone else's work" });
     const c = await as(owner).ai.createConversation({});
-    const provider = new ScriptedProvider([
+    const runtime = new ScriptedRuntime([
       callTool("list_tasks", { mine: true, overdue: true }),
       (req) => {
         const [result] = lastToolResults(req);
-        expect(String(result!.content)).toContain("Renew insurance");
-        expect(String(result!.content)).not.toContain("Someone else's work");
-        return text("You have one overdue task: Renew insurance.")();
+        expect(result!.content).toContain("Renew insurance");
+        expect(result!.content).not.toContain("Someone else's work");
+        return text("You have one overdue task: Renew insurance.")(req);
       },
     ]);
-    const events = await turn(await actorFor(owner, org.id), c.id, "What is overdue for me?", provider);
+    const events = await turn(await actorFor(owner, org.id), c.id, "What is overdue for me?", runtime);
 
-    expect(
-      events
-        .filter((e) => e.type === "text")
-        .map((e) => (e as { delta: string }).delta)
-        .join(""),
-    ).toContain("Renew insurance");
+    expect(events.map((e) => (e.type === "text" ? e.delta : "")).join("")).toContain("Renew insurance");
     expect(events).toContainEqual({ type: "tool", name: "list_tasks", outcome: "OK" });
-    expect(events.at(-1)).toEqual({ type: "done", stopReason: "end_turn" });
+    expect(events.at(-1)).toEqual({ type: "done", stopReason: "end" });
+    const report = events.find((e) => e.type === "report");
+    expect(report?.type === "report" && report.report).toMatchObject({
+      status: "COMPLETED",
+      mode: "model",
+      model: "scripted-test-model",
+      grounded: true,
+      counts: { succeeded: 1, failed: 0 },
+    });
 
-    // Stable system prompt (cacheable); per-request context rides in the user message.
-    expect(provider.requests[0]!.system).toBe(SYSTEM_PROMPT);
-    expect(provider.requests[0]!.system).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    // Stable system prompt; per-request context rides in the user message.
+    expect(runtime.requests[0]!.system).toBe(SYSTEM_PROMPT);
+    expect(runtime.requests[0]!.system).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    expect(runtime.requests[0]!.tools.map((t) => t.name)).toContain("submit_plan");
     // The second request replays the first assistant response unchanged.
-    expect(provider.requests[1]!.messages[1]).toEqual({
+    expect(runtime.requests[1]!.messages[1]).toEqual({
       role: "assistant",
-      content: expect.arrayContaining([expect.objectContaining({ type: "tool_use", name: "list_tasks" })]),
+      content: expect.arrayContaining([expect.objectContaining({ type: "tool_call", name: "list_tasks" })]),
     });
 
     const convo = await as(owner).ai.conversation({ id: c.id });
     expect(convo.items.map((i) => i.kind)).toEqual(["user", "assistant", "tool", "assistant"]);
     expect(convo.title).toBe("What is overdue for me?");
+    expect(convo.runs).toHaveLength(1);
+    expect(convo.runs[0]!.steps.map((s) => [s.tool, s.status, s.planned])).toEqual([
+      ["list_tasks", "SUCCEEDED", false],
+    ]);
     expect(convo.usage).toMatchObject({
       requests: 2,
       inputTokens: 200,
@@ -139,23 +95,23 @@ describe("AI assistant", () => {
     ).rejects.toThrow();
   });
 
-  it("only exposes tools the user's role allows, and refuses hidden ones", async () => {
+  it("only offers tools the user's role allows, and refuses hidden ones", async () => {
     const { owner, org } = await createOrg();
     const viewer = await addMember(org.id, owner, "VIEWER");
     const { callerFor } = await import("./helpers");
     const c = await callerFor(viewer, org.id).ai.createConversation({});
-    const provider = new ScriptedProvider([
+    const runtime = new ScriptedRuntime([
       callTool("create_task", { title: "Sneaky" }),
       (req) => {
         expect(lastToolResults(req)[0]).toMatchObject({
-          is_error: true,
-          content: "This tool is not available to this user.",
+          isError: true,
+          content: "Your role does not allow this.",
         });
-        return text("I can't create tasks for you.")();
+        return text("I can't create tasks for you.")(req);
       },
     ]);
-    await turn(await actorFor(viewer, org.id), c.id, "Create a task", provider);
-    const names = provider.requests[0]!.tools.map((t) => t.name);
+    await turn(await actorFor(viewer, org.id), c.id, "Make a sneaky task", runtime);
+    const names = runtime.requests[0]!.tools.map((t) => t.name);
     expect(names).toContain("list_tasks");
     expect(names).not.toContain("create_task");
     expect(names).not.toContain("update_task_status");
@@ -168,29 +124,34 @@ describe("AI assistant", () => {
     ).toHaveLength(0);
   });
 
-  it("prepares writes but executes them only on explicit, exact, single-use user confirmation", async () => {
+  it("prepares writes but executes them only on explicit, exact, single-use confirmation, then verifies", async () => {
     const { owner, org, as } = await createOrg();
     const c = await as(owner).ai.createConversation({});
     const actor = await actorFor(owner, org.id);
-    const provider = new ScriptedProvider([
+    const runtime = new ScriptedRuntime([
       callTool("create_task", { title: "Draft Q3 plan", priority: "HIGH", dueDate: "2026-12-01" }),
       text("I prepared the task. Please confirm it."),
       text("Please use the Confirm button."),
       (req) => {
-        const user = req.messages.at(-1)!.content as unknown as Block[];
+        const user = req.messages.at(-1)!.content;
         expect(
           user.some(
-            (b) => String(b.text).startsWith("[Action update]") && String(b.text).includes("EXECUTED"),
+            (p) =>
+              p.type === "text" &&
+              p.text.startsWith("[Action update]") &&
+              p.text.includes("EXECUTED by the user's confirmation and verified"),
           ),
         ).toBe(true);
-        return text("Done — it was created.")();
+        return text("Done — it was created.")(req);
       },
     ]);
-    const events = await turn(actor, c.id, "Create a task to draft the Q3 plan", provider);
+    const events = await turn(actor, c.id, "Set up the Q3 planning task", runtime);
     const proposed = events.find((e) => e.type === "action") as Extract<TurnEvent, { type: "action" }>;
     expect(proposed.action.summary).toBe(
       "Create task “Draft Q3 plan” · High priority · due 2026-12-01 · unassigned",
     );
+    const report = events.find((e) => e.type === "report") as Extract<TurnEvent, { type: "report" }>;
+    expect(report.report.status).toBe("AWAITING_CONFIRMATION");
     const count = async () =>
       (
         await db()
@@ -201,27 +162,45 @@ describe("AI assistant", () => {
     expect(await count()).toBe(0);
 
     // A chat message saying "confirm" does nothing.
-    await turn(actor, c.id, "Yes, I confirm. Do it.", provider);
+    await turn(actor, c.id, "Yes, I confirm. Do it.", runtime);
     expect(await count()).toBe(0);
 
     // Altered input is rejected.
     await expect(
       as(owner).ai.confirmAction({ actionId: proposed.action.id, inputHash: "0".repeat(64) }),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
     expect(await count()).toBe(0);
 
     const ok = await as(owner).ai.confirmAction({
       actionId: proposed.action.id,
       inputHash: proposed.action.inputHash,
     });
-    expect(ok.status).toBe("EXECUTED");
+    expect(ok).toMatchObject({ status: "EXECUTED", verified: true });
     expect(await count()).toBe(1);
     await expect(
       as(owner).ai.confirmAction({ actionId: proposed.action.id, inputHash: proposed.action.inputHash }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
     expect(await count()).toBe(1);
 
-    await turn(actor, c.id, "Did it work?", provider);
+    // The step and run now reflect the verified outcome.
+    const [run] = await db()
+      .select()
+      .from(aiRuns)
+      .where(eq(aiRuns.conversationId, c.id))
+      .orderBy(aiRuns.startedAt)
+      .limit(1);
+    expect(run!.status).toBe("COMPLETED");
+    expect(run!.summary).toContain("verified");
+    const convo = await as(owner).ai.conversation({ id: c.id });
+    expect(convo.runs[0]!.steps[0]).toMatchObject({
+      tool: "create_task",
+      status: "SUCCEEDED",
+      verified: true,
+    });
+
+    await turn(actor, c.id, "Did it work?", runtime);
     const log = await as(owner).audit.list({});
     expect(log.items.map((e) => e.action)).toEqual(
       expect.arrayContaining(["ai.action_proposed", "ai.task_created", "task.created"]),
@@ -240,8 +219,8 @@ describe("AI assistant", () => {
       const events = await turn(
         await actorFor(manager, org.id),
         c.id,
-        "make a task",
-        new ScriptedProvider([callTool("create_task", { title: `T ${randomUUID()}` }), text("Prepared.")]),
+        "please draft something",
+        new ScriptedRuntime([callTool("create_task", { title: `T ${randomUUID()}` }), text("Prepared.")]),
       );
       return (events.find((e) => e.type === "action") as Extract<TurnEvent, { type: "action" }>).action;
     };
@@ -249,10 +228,14 @@ describe("AI assistant", () => {
     const a1 = await propose();
     await expect(
       callerFor(colleague, org.id).ai.confirmAction({ actionId: a1.id, inputHash: a1.inputHash }),
-    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    ).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
     await expect(
       other.as(other.owner).ai.confirmAction({ actionId: a1.id, inputHash: a1.inputHash }),
-    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    ).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
 
     const a2 = await propose();
     await db()
@@ -271,11 +254,14 @@ describe("AI assistant", () => {
       code: "FORBIDDEN",
     });
 
-    // The user can reject what remains.
+    // The user can reject what remains; the step records it.
     await M.ai.rejectAction({ actionId: a1.id });
     await expect(M.ai.confirmAction({ actionId: a1.id, inputHash: a1.inputHash })).rejects.toMatchObject({
       code: "CONFLICT",
     });
+    const convo = await M.ai.conversation({ id: c.id });
+    expect(convo.runs[0]!.steps[0]).toMatchObject({ status: "SKIPPED", error: "Rejected by you." });
+    expect(convo.runs[0]!.status).toBe("FAILED");
   });
 
   it("records a failed execution instead of reporting success", async () => {
@@ -288,7 +274,7 @@ describe("AI assistant", () => {
       await actorFor(member, org.id),
       c.id,
       "close it",
-      new ScriptedProvider([
+      new ScriptedRuntime([
         callTool("update_task_status", { taskId: t.id, status: "DONE" }),
         text("Prepared."),
       ]),
@@ -303,6 +289,9 @@ describe("AI assistant", () => {
       error: "You can only change tasks you created or that are assigned to you.",
     });
     expect((await as(owner).tasks.get({ id: t.id })).status).toBe("TODO");
+    const convo = await callerFor(member, org.id).ai.conversation({ id: c.id });
+    expect(convo.runs[0]).toMatchObject({ status: "FAILED" });
+    expect(convo.runs[0]!.steps[0]).toMatchObject({ status: "FAILED" });
   });
 
   it("cannot reach another tenant's data through tools", async () => {
@@ -310,16 +299,15 @@ describe("AI assistant", () => {
     const b = await createOrg();
     const secret = await b.as(b.owner).tasks.create({ title: "B confidential roadmap" });
     const c = await a.as(a.owner).ai.createConversation({});
-    const provider = new ScriptedProvider([
+    const runtime = new ScriptedRuntime([
       callTool("get_task", { taskId: secret.id }),
       (req) => {
-        const [r] = lastToolResults(req);
-        expect(r).toMatchObject({ is_error: true, content: "Task not found." });
+        expect(lastToolResults(req)[0]).toMatchObject({ isError: true, content: "Task not found." });
         expect(JSON.stringify(req.messages)).not.toContain("confidential");
-        return text("I couldn't find that task.")();
+        return text("I couldn't find that task.")(req);
       },
     ]);
-    await turn(await actorFor(a.owner, a.org.id), c.id, `Show task ${secret.id}`, provider);
+    await turn(await actorFor(a.owner, a.org.id), c.id, `Show task ${secret.id}`, runtime);
   });
 
   it("validates tool input, discards refusals and keeps conversations private", async () => {
@@ -327,18 +315,22 @@ describe("AI assistant", () => {
     const member = await addMember(org.id, owner, "MEMBER");
     const c = await as(owner).ai.createConversation({});
     const actor = await actorFor(owner, org.id);
-    const provider = new ScriptedProvider([
+    const runtime = new ScriptedRuntime([
       callTool("get_task", { taskId: "not-a-uuid" }),
       (req) => {
-        expect(String(lastToolResults(req)[0]!.content)).toMatch(/^Invalid input: taskId/);
-        return text("That ID looks wrong.")();
+        expect(lastToolResults(req)[0]!.content).toMatch(/^Invalid input: taskId/);
+        return text("That ID looks wrong.")(req);
       },
       () => ({ content: [{ type: "text", text: "partial output" }], stop: "refusal" }),
     ]);
-    await turn(actor, c.id, "show task not-a-uuid", provider);
+    await turn(actor, c.id, "show task not-a-uuid", runtime);
     const before = (await db().select().from(aiMessages).where(eq(aiMessages.conversationId, c.id))).length;
-    const events = await turn(actor, c.id, "something declined", provider);
-    expect(events).toContainEqual({ type: "error", message: "The assistant declined this request." });
+    const events = await turn(actor, c.id, "something declined", runtime);
+    expect(events).toContainEqual({
+      type: "error",
+      message: "The assistant declined this request.",
+      kind: "internal",
+    });
     const after = await db().select().from(aiMessages).where(eq(aiMessages.conversationId, c.id));
     expect(after.length).toBe(before + 1); // only the user message; partial refusal output is not stored
     expect(JSON.stringify(after.at(-1)!.content)).not.toContain("partial output");
@@ -349,31 +341,29 @@ describe("AI assistant", () => {
     });
     expect(await callerFor(member, org.id).ai.conversations()).toEqual([]);
     const usage = await db().select().from(aiUsage).where(eq(aiUsage.conversationId, c.id));
-    expect(usage.map((u) => u.stopReason)).toEqual(["tool_use", "end_turn", "refusal"]);
+    expect(usage.map((u) => u.stopReason)).toEqual(["tool_use", "end", "refusal"]);
   });
 
   it("never runs a truncated tool call and keeps the transcript valid", async () => {
     const { owner, org, as } = await createOrg();
     const c = await as(owner).ai.createConversation({});
     const actor = await actorFor(owner, org.id);
-    const id = `toolu_${randomUUID()}`;
-    const provider = new ScriptedProvider([
+    const id = `call_${randomUUID()}`;
+    const runtime = new ScriptedRuntime([
       () => ({
-        content: [{ type: "tool_use", id, name: "create_task", input: { title: "Trunc" } }],
+        content: [{ type: "tool_call", id, name: "create_task", input: { title: "Trunc" } }],
         stop: "max_tokens",
       }),
       (req) => {
-        // Every tool_use in the replayed history has a matching tool_result.
-        const results = (req.messages.at(-2)!.content as unknown as Block[]).filter(
-          (b) => b.type === "tool_result",
-        );
-        expect(results).toEqual([expect.objectContaining({ tool_use_id: id, is_error: true })]);
-        return text("Sorry, try again.")();
+        // Every tool call in the replayed history has a matching result.
+        const results = req.messages.at(-2)!.content.filter((p) => p.type === "tool_result");
+        expect(results).toEqual([expect.objectContaining({ toolCallId: id, isError: true })]);
+        return text("Sorry, try again.")(req);
       },
     ]);
-    await turn(actor, c.id, "make a task", provider);
+    await turn(actor, c.id, "do the thing", runtime);
     expect(await db().select().from(aiActions).where(eq(aiActions.conversationId, c.id))).toHaveLength(0);
-    await turn(actor, c.id, "again", provider);
+    await turn(actor, c.id, "again", runtime);
   });
 
   it("rejects concurrent turns in one conversation", async () => {
@@ -383,8 +373,10 @@ describe("AI assistant", () => {
       sql`update ai_conversations set locked_until = now() + interval '1 minute' where id = ${c.id}`,
     );
     await expect(
-      turn(await actorFor(owner, org.id), c.id, "hi", new ScriptedProvider([text("hi")])),
-    ).rejects.toMatchObject({ code: "CONFLICT" });
+      turn(await actorFor(owner, org.id), c.id, "hi", new ScriptedRuntime([text("hi")])),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
   });
 
   it("confirmation cards name the affected task, person and project", async () => {
@@ -402,18 +394,18 @@ describe("AI assistant", () => {
       actor,
       c.id,
       "Close the lease task and add one for Lena",
-      new ScriptedProvider([
+      new ScriptedRuntime([
         () => ({
           content: [
             {
-              type: "tool_use",
-              id: `toolu_${randomUUID()}`,
+              type: "tool_call",
+              id: `call_${randomUUID()}`,
               name: "update_task_status",
               input: { taskId: t.id, status: "DONE" },
             },
             {
-              type: "tool_use",
-              id: `toolu_${randomUUID()}`,
+              type: "tool_call",
+              id: `call_${randomUUID()}`,
               name: "create_task",
               input: { title: "Book movers", assigneeEmployeeId: emp.id, projectId: project.id },
             },
@@ -423,8 +415,7 @@ describe("AI assistant", () => {
         text("Prepared both."),
       ]),
     );
-    const summaries = events.flatMap((e) => (e.type === "action" ? [e.action.summary] : []));
-    expect(summaries).toEqual([
+    expect(events.flatMap((e) => (e.type === "action" ? [e.action.summary] : []))).toEqual([
       `Move task #${t.number} “Renew office lease” from “To do” to “Done”`,
       "Create task “Book movers” · Medium priority · no due date · assigned to Lena Lopez · in project HQ move",
     ]);
@@ -434,25 +425,23 @@ describe("AI assistant", () => {
     const a = await createOrg();
     const b = await createOrg();
     const foreignTask = await b.as(b.owner).tasks.create({ title: "Other org task" });
-    const foreignEmp = await b.as(b.owner).employees.create({
-      firstName: "Far",
-      lastName: "Away",
-      email: `f-${randomUUID()}@example.test`,
-    });
+    const foreignEmp = await b
+      .as(b.owner)
+      .employees.create({ firstName: "Far", lastName: "Away", email: `f-${randomUUID()}@example.test` });
     const actor = await actorFor(a.owner, a.org.id);
     const c = await a.as(a.owner).ai.createConversation({});
-    const provider = new ScriptedProvider([
+    const runtime = new ScriptedRuntime([
       () => ({
         content: [
           {
-            type: "tool_use",
-            id: `toolu_${randomUUID()}`,
+            type: "tool_call",
+            id: `call_${randomUUID()}`,
             name: "update_task_status",
             input: { taskId: foreignTask.id, status: "DONE" },
           },
           {
-            type: "tool_use",
-            id: `toolu_${randomUUID()}`,
+            type: "tool_call",
+            id: `call_${randomUUID()}`,
             name: "create_task",
             input: { title: "x", assigneeEmployeeId: foreignEmp.id },
           },
@@ -461,7 +450,7 @@ describe("AI assistant", () => {
       }),
       text("Could not prepare those."),
     ]);
-    const events = await turn(actor, c.id, "Do it", provider);
+    const events = await turn(actor, c.id, "Do it", runtime);
     expect(events.some((e) => e.type === "action")).toBe(false);
     expect(events.filter((e) => e.type === "tool").map((e) => e.type === "tool" && e.outcome)).toEqual([
       "INVALID",
@@ -469,51 +458,52 @@ describe("AI assistant", () => {
     ]);
     expect(await db().select().from(aiActions).where(eq(aiActions.conversationId, c.id))).toHaveLength(0);
     // The model is told why, without details of the other organization's record.
-    const results = JSON.stringify(lastToolResults(provider.requests[1]!));
+    const results = JSON.stringify(lastToolResults(runtime.requests[1]!));
     expect(results).not.toContain("Other org task");
     expect(results).not.toContain("Far");
   });
 
-  it("a turn whose lock was taken over stops and never releases the newer lock", async () => {
+  it("a turn whose lock was taken over stops, never releases the newer lock, and closes its run", async () => {
     const { owner, org, as } = await createOrg();
     const actor = await actorFor(owner, org.id);
     const c = await as(owner).ai.createConversation({});
     const stolen = new Date(Date.now() + 120_000);
-    const provider = new ScriptedProvider([
-      callTool("get_operational_snapshot", {}),
-      // Never reached: the lock is lost before the second request.
-      text("unreachable"),
-    ]);
-    const original = provider.run.bind(provider);
-    provider.run = async (req, onText) => {
+    const runtime = new ScriptedRuntime([callTool("get_operational_snapshot", {}), text("unreachable")]);
+    const original = runtime.run.bind(runtime);
+    runtime.run = async (req, onText) => {
       const res = await original(req, onText);
       // Simulate another tab starting a turn after this one's lock lapsed.
       await db().update(aiConversations).set({ lockedUntil: stolen }).where(eq(aiConversations.id, c.id));
       return res;
     };
-    await expect(turn(actor, c.id, "status?", provider)).rejects.toMatchObject({ code: "CONFLICT" });
-    expect(provider.requests).toHaveLength(1);
+    await expect(turn(actor, c.id, "status?", runtime)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(runtime.requests).toHaveLength(1);
     const [conv] = await db().select().from(aiConversations).where(eq(aiConversations.id, c.id));
     expect(conv!.lockedUntil?.getTime()).toBe(stolen.getTime());
+    const [run] = await db().select().from(aiRuns).where(eq(aiRuns.conversationId, c.id));
+    expect(run!.status).toBe("FAILED");
   });
 
-  it("stops the turn when the client disconnects", async () => {
+  it("stops the turn when the user presses Stop", async () => {
     const { owner, org, as } = await createOrg();
     const actor = await actorFor(owner, org.id);
     const c = await as(owner).ai.createConversation({});
     const abort = new AbortController();
-    const provider = new ScriptedProvider([
-      () => {
-        abort.abort(); // the browser tab closed while the first answer streamed
-        return callTool("get_operational_snapshot", {})();
+    const runtime = new ScriptedRuntime([
+      (req) => {
+        abort.abort(); // Stop pressed while the first answer streamed
+        return callTool("get_operational_snapshot", {})(req);
       },
       text("unreachable"),
     ]);
     const events: TurnEvent[] = [];
-    await runTurn(db(), actor, c.id, "status?", (e) => events.push(e), provider, abort.signal);
-    expect(provider.requests).toHaveLength(1);
+    await runTurn(db(), actor, c.id, "status?", (e) => events.push(e), runtime, abort.signal);
+    expect(runtime.requests).toHaveLength(1);
     const [conv] = await db().select().from(aiConversations).where(eq(aiConversations.id, c.id));
     expect(conv!.lockedUntil).toBeNull();
+    const report = events.find((e) => e.type === "report") as Extract<TurnEvent, { type: "report" }>;
+    expect(report.report.status).toBe("CANCELLED");
+    expect(report.report.steps[0]).toMatchObject({ tool: "get_operational_snapshot", status: "CANCELLED" });
   });
 
   it("drops the oldest whole exchanges when the history outgrows the budget", () => {
@@ -522,28 +512,19 @@ describe("AI assistant", () => {
       role: "assistant" as const,
       content: [{ type: "text" as const, text: t }],
     });
-    const toolUse = {
+    const call = {
       role: "assistant" as const,
-      content: [{ type: "tool_use", id: "t1", name: "x", input: {} }],
+      content: [{ type: "tool_call" as const, id: "t1", name: "x", input: {} }],
     };
-    const toolResult = {
+    const result = {
       role: "user" as const,
-      content: [{ type: "tool_result", tool_use_id: "t1", content: "r" }],
+      content: [{ type: "tool_result" as const, toolCallId: "t1", content: "r" }],
     };
     const big = "x".repeat(1000);
-    const history = [
-      user(big),
-      asst(big),
-      user(big),
-      toolUse,
-      toolResult,
-      asst(big),
-      user("latest"),
-    ] as never[];
+    const history = [user(big), asst(big), user(big), call, result, asst(big), user("latest")];
     expect(fitHistory(history, 100_000)).toHaveLength(7);
-    const fitted = fitHistory(history, 1500);
-    // Cut at an exchange start, never between a tool_use and its tool_result.
-    expect(fitted[0]).toEqual(user("latest"));
+    // Cut at an exchange start, never between a tool call and its result.
+    expect(fitHistory(history, 1500)[0]).toEqual(user("latest"));
     const mid = fitHistory(history, 2400);
     expect(mid[0]).toEqual(user(big));
     expect(mid).toHaveLength(5);

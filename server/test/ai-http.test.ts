@@ -5,7 +5,7 @@ import superjson from "superjson";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
 import { aiLimiter } from "../src/modules/ai/assistant";
-import { setAiProvider, type AiMessage, type AiProvider } from "../src/modules/ai/provider";
+import { setModelRuntime, type ModelRuntime } from "../src/modules/ai/runtime";
 import { resetLimiters } from "./helpers";
 
 let server: Server;
@@ -16,25 +16,24 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
 afterAll(() => {
-  setAiProvider(null);
+  setModelRuntime(null);
   return new Promise<void>((r) => server.close(() => r()));
 });
 
-const echo: AiProvider = {
-  model: "scripted-test-model",
+const echo: ModelRuntime = {
+  info: { provider: "scripted", model: "scripted-test-model", hosting: "self-hosted" },
+  async health() {
+    return { ok: true };
+  },
   async run(_req, onText) {
     onText("Hello ");
     onText("there.");
     return {
-      id: "msg_test",
-      type: "message",
-      role: "assistant",
       model: "scripted-test-model",
       content: [{ type: "text", text: "Hello there." }],
-      stop_reason: "end_turn",
-      stop_sequence: null,
-      usage: { input_tokens: 1, output_tokens: 1 },
-    } as unknown as AiMessage;
+      stopReason: "end",
+      usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    };
   },
 };
 
@@ -51,7 +50,7 @@ describe("AI streaming endpoint", () => {
   it("streams NDJSON events for an authenticated member and enforces CSRF", async () => {
     await resetLimiters();
     await aiLimiter.reset();
-    setAiProvider(echo);
+    setModelRuntime(echo);
     const signup = await trpc(
       "auth.signup",
       { email: `ai-${randomUUID()}@e.test`, name: "Ai User", password: "longpassword1" },
@@ -93,6 +92,35 @@ describe("AI streaming endpoint", () => {
         .map((e) => e.delta)
         .join(""),
     ).toBe("Hello there.");
-    expect(events.at(-1)).toEqual({ type: "done", stopReason: "end_turn" });
+    expect(events.at(-1)).toEqual({ type: "done", stopReason: "end" });
+    // The run is announced first and reported last, from what actually happened.
+    expect(events[0]!.type).toBe("run");
+    expect(events.at(-2)!.type).toBe("report");
+
+    // Without a model the same endpoint answers supported commands with FLOWOS rules, and
+    // refuses to guess at anything else.
+    setModelRuntime(null);
+    const rules = async (text: string) =>
+      (
+        await (
+          await fetch(url, {
+            method: "POST",
+            headers: { ...headers, "x-flowos-client": "web", "content-type": "application/json" },
+            body: JSON.stringify({ text }),
+          })
+        ).text()
+      )
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l) as { type: string; delta?: string; run?: { mode: string } });
+    const known = await rules("Which approvals are waiting for me?");
+    expect(known[0]).toMatchObject({ type: "run", run: { mode: "rules" } });
+    expect(known.find((e) => e.type === "text")?.delta).toBe(
+      "No approval requests are waiting for your decision.",
+    );
+    const unknown = await rules("Write me a poem about logistics");
+    expect(unknown.find((e) => e.type === "text")?.delta).toMatch(
+      /^I can't interpret that request without a language model/,
+    );
   });
 });
